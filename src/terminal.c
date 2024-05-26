@@ -45,19 +45,33 @@ struct RenderContext {
 
     // Glyph atlas information
     int* characterAtlasMap;
+    // User controlled font size, used as the line height of the rendered text.
     int fontSize;
-    int advance;
-    int lineHeight;
+    // Font size used when rendering glyphs to the atlas texture. These glyphs are sampled to render at the actual font size.
+    int atlasFontHeight;
+    // Pixel vector containing (advance, lineHeight) used when rendering to screen.
+    struct Vec2i screenGlyphSize;
+    // Pixel vector containing (advance, lineHeight) for glyphs in atlas texture.
+    struct Vec2i atlasGlyphSize;
+    // Vector containing the number of rows/columns in the atlas texture.
     struct Vec2i atlasTileSize;
     struct Vec2i *glyphOffsets;
 };
 
 struct TextShaderContext {
-    int advance;
-    int lineHeight;
+    // Pixel vector containing (advance, lineHeight) for glyphs in atlas texture.
+    struct Vec2i atlasGlyphSize;
+    // Pixel vector containing (advance, lineHeight) used when rendering to screen.
+    struct Vec2i screenGlyphSize;
+    // Pixel vector containing screen resolution.
     struct Vec2i screenSize;
+    // Vector containing (columns, rows) for the screen grid.
     struct Vec2i screenTileSize;
+    // Vector containing (columns, rows) for the atlas texture grid.
     struct Vec2i atlasTileSize;
+    // Pixel vector containing the number of extra pixels on the right and bottom of the screen.
+    // These areas do not fit a full glyph so are not used.
+    struct Vec2i screenExcess;
     int glyphIndices[1024 * 1024];
     struct Vec2i glyphOffsets[1024 * 1024];
 };
@@ -144,9 +158,19 @@ GLuint generateGlyphAtlas(GLuint shaderContextId, struct RenderContext *renderCo
         printf("Failed to set font size.\n");
         exit(-1);
     }
+    renderContext->screenGlyphSize = (struct Vec2i) {
+        .x = face->size->metrics.max_advance >> 6,
+        .y = face->size->metrics.height >> 6
+    };
 
-    renderContext->advance = face->size->metrics.max_advance >> 6;
-    renderContext->lineHeight = face->size->metrics.height >> 6;
+    if (FT_Set_Pixel_Sizes(face, 0, renderContext->atlasFontHeight)) {
+        printf("Failed to set font size.\n");
+        exit(-1);
+    }
+    renderContext->atlasGlyphSize = (struct Vec2i) {
+        .x = face->size->metrics.max_advance >> 6,
+        .y = face->size->metrics.height >> 6
+    };
 
     FT_Pos maxWidth = 0, maxHeight = 0;
     for (int asciiCode = 33; asciiCode <= 126; asciiCode++) {
@@ -159,17 +183,19 @@ GLuint generateGlyphAtlas(GLuint shaderContextId, struct RenderContext *renderCo
         if (pixelWidth > maxWidth) maxWidth = pixelWidth;
         if (pixelHeight > maxHeight) maxHeight = pixelHeight;
     }
-    printf("Max glyph dimensions are (%ld, %ld), advance is %d, line height is %d.\n", maxWidth, maxHeight, renderContext->advance, renderContext->lineHeight);
+    printf(
+        "Max glyph dimensions are (%ld, %ld), screen glyph size is (%d, %d), atlas glyph size is (%d, %d).\n",
+        maxWidth, maxHeight, renderContext->screenGlyphSize.x, renderContext->screenGlyphSize.y, renderContext->atlasGlyphSize.x, renderContext->atlasGlyphSize.y);
 
     GLuint texture;
     glGenTextures(1, &texture);
     glBindTexture(GL_TEXTURE_2D, texture);
-    glTexImage2D(GL_TEXTURE_2D, 0, GL_RED, renderContext->atlasTileSize.x * renderContext->advance, renderContext->atlasTileSize.y * renderContext->lineHeight, 0, GL_RED, GL_UNSIGNED_BYTE, 0);
+    glTexImage2D(GL_TEXTURE_2D, 0, GL_RED, renderContext->atlasTileSize.x * renderContext->atlasGlyphSize.x, renderContext->atlasTileSize.y * renderContext->atlasGlyphSize.y, 0, GL_RED, GL_UNSIGNED_BYTE, 0);
     glPixelStorei(GL_UNPACK_ALIGNMENT, 1);
 
     int nextTileX = 1;
     int nextTileY = 0;
-    char *flippedBitmap = malloc(sizeof(char) * renderContext->advance * renderContext->lineHeight);
+    char *flippedBitmap = malloc(sizeof(char) * renderContext->atlasGlyphSize.x * renderContext->atlasGlyphSize.y);
 
     for (int asciiCode = 33; asciiCode <= 126; asciiCode++) {
         FT_UInt glyphIndex = FT_Get_Char_Index(face, asciiCode);
@@ -185,15 +211,15 @@ GLuint generateGlyphAtlas(GLuint shaderContextId, struct RenderContext *renderCo
         renderContext->glyphOffsets[asciiCode - 33].x = face->glyph->metrics.horiBearingX;
         renderContext->glyphOffsets[asciiCode - 33].y = face->glyph->metrics.horiBearingY;
 
-        memset(flippedBitmap, 0, renderContext->advance * renderContext->lineHeight);
+        memset(flippedBitmap, 0, renderContext->atlasGlyphSize.x * renderContext->atlasGlyphSize.y);
         for (int x = 0; x < bitmapWidth; x++) {
             for (int y = 0; y < bitmapHeight; y++) {
-                flippedBitmap[y * renderContext->advance + x] = bitmap->buffer[(bitmapHeight - y - 1) * bitmapWidth + x];
+                flippedBitmap[y * renderContext->atlasGlyphSize.x + x] = bitmap->buffer[(bitmapHeight - y - 1) * bitmapWidth + x];
             }
         }
 
         // Each glyph is written to the bottom left of a rectangle whose width is the horizontal advance and whose height is the line height.
-        glTexSubImage2D(GL_TEXTURE_2D, 0, nextTileX * renderContext->advance, nextTileY * renderContext->lineHeight, renderContext->advance, renderContext->lineHeight, GL_RED, GL_UNSIGNED_BYTE, flippedBitmap);
+        glTexSubImage2D(GL_TEXTURE_2D, 0, nextTileX * renderContext->atlasGlyphSize.x, nextTileY * renderContext->atlasGlyphSize.y, renderContext->atlasGlyphSize.x, renderContext->atlasGlyphSize.y, GL_RED, GL_UNSIGNED_BYTE, flippedBitmap);
         renderContext->characterAtlasMap[asciiCode] = nextTileY * renderContext->atlasTileSize.x + nextTileX;
         nextTileX += 1;
         if (nextTileX >= renderContext->atlasTileSize.x) {
@@ -417,10 +443,8 @@ void updateText(struct RenderContext *context, struct Buffer *buffer) {
     struct TextShaderContext *shaderContext = (struct TextShaderContext*) ssboPointer;
 
     // Should these be updated every time?
-    shaderContext->advance = context->advance;
-    shaderContext->lineHeight = context->lineHeight;
-    shaderContext->screenSize = context->screenSize;
-    shaderContext->screenTileSize = context->screenTileSize;
+    shaderContext->atlasGlyphSize = context->atlasGlyphSize;
+    shaderContext->screenGlyphSize = context->screenGlyphSize;
     shaderContext->atlasTileSize = context->atlasTileSize;
 
     for (int i = 0; i < buffer->length; i++) {
@@ -443,6 +467,14 @@ void updateText(struct RenderContext *context, struct Buffer *buffer) {
         }
     }
 
+    // For debugging
+    // for (int i = 0; i < 40; i++) {
+    //     shaderContext->glyphIndices[i] = i;
+    // }
+    // for (int i = 100; i < context->screenTileSize.x * context->screenTileSize.y; i++) {
+    //     shaderContext->glyphIndices[i] = 0;
+    // }
+
     glUnmapBuffer(GL_SHADER_STORAGE_BUFFER);
 }
 
@@ -452,8 +484,13 @@ void onWindowResize(struct RenderContext* context, int newWidth, int newHeight) 
     context->screenSize.y = newHeight;
 
     context->screenTileSize = (struct Vec2i) {
-        .x = newWidth / context->advance,
-        .y = newHeight / context->lineHeight
+        .x = newWidth / context->screenGlyphSize.x,
+        .y = newHeight / context->screenGlyphSize.y
+    };
+
+    struct Vec2i screenExcess = {
+        .x = newWidth % context->screenGlyphSize.x,
+        .y = newHeight % context->screenGlyphSize.y
     };
 
     if (context->cursorPosition.x >= context->screenTileSize.x) {
@@ -464,7 +501,17 @@ void onWindowResize(struct RenderContext* context, int newWidth, int newHeight) 
         context->cursorPosition.y = context->screenTileSize.y - 1;
     }
 
-    printf("Window size update: (%d, %d), tile size = (%d, %d), cursor = (%d, %d)\n", newWidth, newHeight, context->screenTileSize.x, context->screenTileSize.y, context->cursorPosition.x, context->cursorPosition.y);
+    // Update size related information in the shader context.
+    glBindBuffer(GL_SHADER_STORAGE_BUFFER, context->shaderContextId);
+    GLvoid *ssboPointer = glMapBufferRange(GL_SHADER_STORAGE_BUFFER, 0, sizeof(struct TextShaderContext), GL_MAP_WRITE_BIT | GL_MAP_INVALIDATE_BUFFER_BIT);
+    struct TextShaderContext *shaderContext = (struct TextShaderContext*) ssboPointer;
+    shaderContext->screenSize = context->screenSize;
+    shaderContext->screenTileSize = context->screenTileSize;
+    shaderContext->screenExcess = screenExcess;
+    glUnmapBuffer(GL_SHADER_STORAGE_BUFFER);
+
+    printf("Window size update: (%d, %d), screen tile size = (%d, %d), excess = (%d, %d), cursor = (%d, %d)\n",
+        context->screenSize.x, context->screenSize.y, context->screenTileSize.x, context->screenTileSize.y, screenExcess.x, screenExcess.y, context->cursorPosition.x, context->cursorPosition.y);
 }
 
 void render(struct RenderContext *context) {
@@ -494,7 +541,16 @@ int main(int argc, char** argv) {
     struct RenderContext renderContext;
 
     renderContext.screenSize = (struct Vec2i) { .x = 640, .y = 480 };
-    renderContext.fontSize = 32;
+    renderContext.fontSize = 40;
+    /*
+    fontSize is used to control the actual screen-space size of the rendered text. atlasFontHeight is used to control
+    the size of text rendered to the atlas texture. I thought that rendering high resolution glyphs to the atlas texture
+    would allow for sampling at smaller font sizes, but the text looks worse in this situation. Having the atlas font size
+    match the rendered font size looks much better.
+
+    Would be nice to do the sampling so that the font size can be changed without recreating the atlas texture.
+    */
+    renderContext.atlasFontHeight = 40;
     renderContext.atlasTileSize = (struct Vec2i) { .x = 12, .y = 12 };
     renderContext.characterAtlasMap = (int*) malloc(sizeof(int) * renderContext.atlasTileSize.x * renderContext.atlasTileSize.y);
 
@@ -507,10 +563,10 @@ int main(int argc, char** argv) {
     renderContext.glyphOffsets = malloc(sizeof(struct Vec2i) * renderContext.atlasTileSize.x * renderContext.atlasTileSize.y);
 
     renderContext.cursorPosition.x = 0;
-    renderContext.cursorPosition.y = 14;
+    renderContext.cursorPosition.y = 10;
 
     renderSetup(&renderContext);
-    onWindowResize(&renderContext, 640, 480);
+    onWindowResize(&renderContext, renderContext.screenSize.x, renderContext.screenSize.y);
     int controlFd = spawnShell();
 
     struct Buffer shellOutputBuffer;
