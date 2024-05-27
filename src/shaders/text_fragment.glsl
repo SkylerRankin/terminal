@@ -1,4 +1,4 @@
-#version 450
+#version 430
 
 layout(std430, binding = 2) buffer TextShaderContext {
     ivec2 atlasGlyphSize;
@@ -7,7 +7,8 @@ layout(std430, binding = 2) buffer TextShaderContext {
     ivec2 screenTileSize;
     ivec2 atlasTileSize;
     ivec2 screenExcess;
-    int glyphIndices[1024 * 1024];
+    uint glyphIndices[1024 * 1024];
+    uint glyphColors[1024 * 1024];
     ivec2 glyphOffsets[1024 * 1024];
 } context;
 
@@ -16,9 +17,6 @@ uniform vec2 resolution;
 out vec4 outColor;
 
 void main() {
-    // Stuff that should be inputs.
-    vec3 textColor = vec3(1.0, 1.0, 1.0);
-
     // Setup constants
     vec2 glyphTextureSize = context.atlasTileSize * context.atlasGlyphSize;
     vec2 pixelPosition = vec2(
@@ -42,14 +40,20 @@ void main() {
     int tileIndex = tile.y * context.screenTileSize.x + tile.x;
 
     // Find 2d tile coordinates of the corresponding glyph.
-    int glyphIndex = context.glyphIndices[tileIndex];
+    uint glyphIndex = context.glyphIndices[tileIndex];
     ivec2 glyphTile = ivec2(mod(glyphIndex, context.atlasTileSize.x), floor(glyphIndex / context.atlasTileSize.x));
 
     // Convert tile coordinate into the actual coordinate within glyph texture.
     vec2 tileOffset = mod(pixelPosition.xy, context.screenGlyphSize) / vec2(context.screenGlyphSize);
-    vec2 glyphCoordinate = ((glyphTile * context.atlasGlyphSize) + (tileOffset * context.atlasGlyphSize)) / glyphTextureSize;
+    vec2 glyphOffset = context.glyphOffsets[glyphIndex] * 0; // Doesn't work yet
+    vec2 glyphCoordinate = ((glyphTile * context.atlasGlyphSize) + (tileOffset * context.atlasGlyphSize) + glyphOffset) / glyphTextureSize;
 
     // Sample the glyph atlas to set pixel color.
+    vec3 textColor = vec3(
+        float((context.glyphColors[tileIndex] >> 16) & 0xFF) / 0xFF,
+        float((context.glyphColors[tileIndex] >> 8) & 0xFF) / 0xFF,
+        float((context.glyphColors[tileIndex] >> 0) & 0xFF) / 0xFF
+    );
     vec4 glyphSample = vec4(1.0, 1.0, 1.0, texture(glyphTexture, glyphCoordinate).r);
     outColor = vec4(textColor, 1.0) * glyphSample * outOfBoundsMask;
 
