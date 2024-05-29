@@ -12,6 +12,7 @@
 #include <pty.h>
 #include <stddef.h>
 #include <stdio.h>
+#include <sys/ioctl.h>
 #include <time.h>
 #include <unistd.h>
 
@@ -196,7 +197,7 @@ GLuint generateGlyphAtlas(GLuint shaderContextId, struct RenderContext *renderCo
     return texture;
 }
 
-int spawnShell() {
+void spawnShell() {
     int controlFd;
     int pid = forkpty(&controlFd, 0, 0, 0);
     if (pid == -1) {
@@ -212,7 +213,7 @@ int spawnShell() {
         int flags = fcntl(controlFd, F_GETFL, 0);
         fcntl(controlFd, F_SETFL, flags | O_NONBLOCK);
     }
-    return controlFd;
+    renderContext.controlFd = controlFd;
 }
 
 GLuint compileShader(char* shaderPath, GLenum shaderType) {
@@ -280,7 +281,7 @@ void renderSetup(struct RenderContext *renderContext) {
         exit(-1);
     }
     glfwSetWindowUserPointer(window, renderContext);
-
+    glfwSetWindowSizeLimits(window, 300, 20, GLFW_DONT_CARE, GLFW_DONT_CARE);
     glfwSetKeyCallback(window, keyCallback);
     glfwMakeContextCurrent(window);
     gladLoadGLLoader((GLADloadproc) glfwGetProcAddress);
@@ -407,10 +408,8 @@ void updateText(struct RenderContext *context, struct Buffer *buffer) {
         int character;
         if (!processTextByte(buffer->data[i], &character, context)) continue;
 
-
-        int glyphIndex = context->cursorPosition.y * context->screenTileSize.x + context->cursorPosition.x;
+        int glyphIndex = context->cursorPosition.y * MAX_CHARACTERS_IN_ROW + context->cursorPosition.x;
         shaderContext->glyphIndices[glyphIndex] = context->characterAtlasMap[character];
-        // shaderContext->glyphIndices[glyphIndex] = context->characterAtlasMap[buffer->data[i]];
         shaderContext->glyphColors[glyphIndex] = context->foregroundColor;
 
         context->cursorPosition.x++;
@@ -468,6 +467,13 @@ void onWindowResize(struct RenderContext* context, int newWidth, int newHeight) 
     shaderContext->screenExcess = screenExcess;
     glUnmapBuffer(GL_SHADER_STORAGE_BUFFER);
 
+    // Inform pseudo-terminal of new window size
+    struct winsize windowSize = {
+        .ws_col = context->screenTileSize.x,
+        .ws_row = context->screenTileSize.y
+    };
+    ioctl(context->controlFd, TIOCGWINSZ, &windowSize);
+
     printf("Window size update: (%d, %d), screen tile size = (%d, %d), excess = (%d, %d), cursor = (%d, %d)\n",
         context->screenSize.x, context->screenSize.y, context->screenTileSize.x, context->screenTileSize.y, screenExcess.x, screenExcess.y, context->cursorPosition.x, context->cursorPosition.y);
 }
@@ -496,7 +502,7 @@ void render(struct RenderContext *context) {
 }
 
 int main(int argc, char** argv) {
-    renderContext.screenSize = (struct Vec2i) { .x = 640, .y = 480 };
+    renderContext.screenSize = (struct Vec2i) { .x = 960, .y = 480 };
     renderContext.fontSize = 20;
     /*
     fontSize is used to control the actual screen-space size of the rendered text. atlasFontHeight is used to control
@@ -525,7 +531,7 @@ int main(int argc, char** argv) {
     renderContext.cursorPosition.x = 0;
     renderContext.cursorPosition.y = renderContext.screenTileSize.y - 1;
 
-    int controlFd = spawnShell();
+    spawnShell();
 
     struct Buffer shellOutputBuffer;
     shellOutputBuffer.length = 1024;
@@ -533,10 +539,10 @@ int main(int argc, char** argv) {
 
     while (!glfwWindowShouldClose(renderContext.window)) {
         if (renderContext.keyBuffer.currentIndex > 0) {
-            sendKeyInputToShell(controlFd, &renderContext);
+            sendKeyInputToShell(renderContext.controlFd, &renderContext);
         }
 
-        int bytesRead = pollShell(controlFd, &shellOutputBuffer);
+        int bytesRead = pollShell(renderContext.controlFd, &shellOutputBuffer);
         if (bytesRead > 0) {
             updateText(&renderContext, &shellOutputBuffer);
         }
