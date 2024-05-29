@@ -137,8 +137,14 @@ static void executeC0ControlCode(u8 byte) {
     switch (byte) {
         case 0xA:
             renderContext.cursorPosition.x = 0;
-            if (renderContext.cursorPosition.y > 0) {
-                renderContext.cursorPosition.y -= 1;
+            renderContext.cursorPosition.y += 1;
+
+            // If cursor position has passed the bottom row, cursor remains at the last row and the
+            // row offset is incremented.
+            if (renderContext.cursorPosition.y >= renderContext.screenTileSize.y) {
+                renderContext.cursorPosition.y = renderContext.screenTileSize.y - 1;
+                // TODO: mod offset with max rows? this way the row offset doesn't need to increase forever unnecessarily
+                renderContext.glyphIndicesRowOffset++;
             }
             printf("0xA: new cursor = (%d, %d)\n", renderContext.cursorPosition.x, renderContext.cursorPosition.y);
             break;

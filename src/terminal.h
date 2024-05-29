@@ -22,6 +22,7 @@ struct RenderContext {
     struct Vec2i screenTileSize;
     struct Vec2i cursorPosition;
     struct KeyBuffer keyBuffer;
+    int scrollOffset;
 
     // Psuedo-terminal information
     int controlFd;
@@ -47,6 +48,7 @@ struct RenderContext {
     struct Vec2i *glyphOffsets;
     int foregroundColor;
     int backgroundColor;
+    int glyphIndicesRowOffset;
 };
 
 struct TextShaderContext {

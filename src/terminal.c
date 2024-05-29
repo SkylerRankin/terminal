@@ -66,6 +66,27 @@ static void keyCallback(GLFWwindow* window, int key, int scancode, int action, i
     }
 }
 
+static void scrollCallback(GLFWwindow *window, double xOffset, double yOffset) {
+    // TODO: this doesn't work for non-integer scroll values
+
+    int updateShaderBuffer = 0;
+    if (yOffset < 0 && renderContext.scrollOffset > 0) {
+        renderContext.scrollOffset -= 1;
+        updateShaderBuffer = 1;
+    } else if (yOffset > 0 && renderContext.scrollOffset < renderContext.glyphIndicesRowOffset) {
+        renderContext.scrollOffset += 1;
+        updateShaderBuffer = 1;
+    }
+
+    if (updateShaderBuffer) {
+        glBindBuffer(GL_SHADER_STORAGE_BUFFER, renderContext.shaderContextId);
+        GLvoid *ssboPointer = glMapBufferRange(GL_SHADER_STORAGE_BUFFER, 0, sizeof(struct TextShaderContext), GL_MAP_WRITE_BIT);
+        struct TextShaderContext *shaderContext = (struct TextShaderContext*) ssboPointer;
+        shaderContext->glyphIndicesRowOffset = renderContext.glyphIndicesRowOffset - renderContext.scrollOffset;
+        glUnmapBuffer(GL_SHADER_STORAGE_BUFFER);
+    }
+}
+
 int lastIndexOf(char *string, int size, char c) {
     for (int i = size; i >= 0; i--) {
         if (string[i] == c) {
@@ -283,6 +304,7 @@ void renderSetup(struct RenderContext *renderContext) {
     glfwSetWindowUserPointer(window, renderContext);
     glfwSetWindowSizeLimits(window, 300, 20, GLFW_DONT_CARE, GLFW_DONT_CARE);
     glfwSetKeyCallback(window, keyCallback);
+    glfwSetScrollCallback(window, scrollCallback);
     glfwMakeContextCurrent(window);
     gladLoadGLLoader((GLADloadproc) glfwGetProcAddress);
     glfwSwapInterval(1);
@@ -337,6 +359,7 @@ void renderSetup(struct RenderContext *renderContext) {
     glAttachShader(program, vertexShader);
     glAttachShader(program, fragmentShader);
     glLinkProgram(program);
+    glUseProgram(program);
 
     GLint vertexPositionLocation = glGetAttribLocation(program, "vertexPosition");
     glEnableVertexAttribArray(vertexPositionLocation);
@@ -408,29 +431,22 @@ void updateText(struct RenderContext *context, struct Buffer *buffer) {
         int character;
         if (!processTextByte(buffer->data[i], &character, context)) continue;
 
-        int glyphIndex = context->cursorPosition.y * MAX_CHARACTERS_IN_ROW + context->cursorPosition.x;
+        // Reset scroll offset to jump back to current line when there are printed characters.
+        renderContext.scrollOffset = 0;
+
+        int glyphIndex = (context->cursorPosition.y + renderContext.glyphIndicesRowOffset) * MAX_CHARACTERS_IN_ROW + context->cursorPosition.x;
+        shaderContext->glyphIndicesRowOffset = renderContext.glyphIndicesRowOffset;
         shaderContext->glyphIndices[glyphIndex] = context->characterAtlasMap[character];
         shaderContext->glyphColors[glyphIndex] = context->foregroundColor;
 
         context->cursorPosition.x++;
+
+        // TODO: this is kind of performing line wrapping...should that be handled here?
         if (context->cursorPosition.x >= context->screenTileSize.x) {
             context->cursorPosition.x = 0;
-            context->cursorPosition.y--;
-        }
-
-        if (context->cursorPosition.y < 0) {
-            context->cursorPosition.x = 0;
-            context->cursorPosition.y = context->screenTileSize.y - 1;
+            context->cursorPosition.y++;
         }
     }
-
-    // For debugging
-    // for (int i = 0; i < 40; i++) {
-    //     shaderContext->glyphIndices[i] = i;
-    // }
-    // for (int i = 100; i < context->screenTileSize.x * context->screenTileSize.y; i++) {
-    //     shaderContext->glyphIndices[i] = 0;
-    // }
 
     glUnmapBuffer(GL_SHADER_STORAGE_BUFFER);
 }
@@ -485,8 +501,6 @@ void render(struct RenderContext *context) {
     glViewport(0, 0, width, height);
     glClear(GL_COLOR_BUFFER_BIT);
 
-    glUseProgram(context->programId);
-
     if (width != context->screenSize.x || height != context->screenSize.y) {
         onWindowResize(context, width, height);
     }
@@ -529,7 +543,7 @@ int main(int argc, char** argv) {
     onWindowResize(&renderContext, renderContext.screenSize.x, renderContext.screenSize.y);
 
     renderContext.cursorPosition.x = 0;
-    renderContext.cursorPosition.y = renderContext.screenTileSize.y - 1;
+    renderContext.cursorPosition.y = 0;
 
     spawnShell();
 
