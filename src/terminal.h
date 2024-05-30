@@ -4,7 +4,7 @@
 #include <GLFW/glfw3.h>
 #include "../lib/glad/glad.h"
 
-#define MAX_CHARACTERS_IN_ROW 500
+#define MAX_CHARACTERS_PER_ROW 500
 #define MAX_ROWS 1000
 
 struct KeyBuffer {
@@ -70,7 +70,7 @@ struct TextShaderContext {
     // Pixel vector containing the number of extra pixels on the right and bottom of the screen.
     // These areas do not fit a full glyph so are not used.
     struct Vec2i screenExcess;
-    int glyphIndices[MAX_CHARACTERS_IN_ROW * MAX_ROWS];
-    int glyphColors[MAX_CHARACTERS_IN_ROW * MAX_ROWS];
-    struct Vec2i glyphOffsets[MAX_CHARACTERS_IN_ROW * MAX_ROWS];
+    int glyphIndices[MAX_CHARACTERS_PER_ROW * MAX_ROWS];
+    int glyphColors[MAX_CHARACTERS_PER_ROW * MAX_ROWS];
+    struct Vec2i glyphOffsets[MAX_CHARACTERS_PER_ROW * MAX_ROWS];
 };

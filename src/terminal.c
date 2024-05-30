@@ -73,7 +73,7 @@ static void scrollCallback(GLFWwindow *window, double xOffset, double yOffset) {
     if (yOffset < 0 && renderContext.scrollOffset > 0) {
         renderContext.scrollOffset -= 1;
         updateShaderBuffer = 1;
-    } else if (yOffset > 0 && renderContext.scrollOffset < renderContext.glyphIndicesRowOffset) {
+    } else if (yOffset > 0 && renderContext.scrollOffset < MAX_ROWS - renderContext.screenTileSize.y) {
         renderContext.scrollOffset += 1;
         updateShaderBuffer = 1;
     }
@@ -374,15 +374,15 @@ void renderSetup(struct RenderContext *renderContext) {
 void sendKeyInputToShell(int controlFd, struct RenderContext *context) {
     context->keyBuffer.data[context->keyBuffer.currentIndex] = '\0';
     write(controlFd, context->keyBuffer.data, context->keyBuffer.currentIndex);
-    printf("writing %d bytes to control: [", context->keyBuffer.currentIndex);
-    for (int i = 0; i < context->keyBuffer.currentIndex; i++) {
-        if (isprint(context->keyBuffer.data[i])) {
-            printf("%c", context->keyBuffer.data[i]);
-        } else {
-            printf("\\x%x", context->keyBuffer.data[i]);
-        }
-    }
-    printf("]\n");
+    // printf("writing %d bytes to control: [", context->keyBuffer.currentIndex);
+    // for (int i = 0; i < context->keyBuffer.currentIndex; i++) {
+    //     if (isprint(context->keyBuffer.data[i])) {
+    //         printf("%c", context->keyBuffer.data[i]);
+    //     } else {
+    //         printf("\\x%x", context->keyBuffer.data[i]);
+    //     }
+    // }
+    // printf("]\n");
 
     context->keyBuffer.currentIndex = 0;
 }
@@ -400,17 +400,17 @@ int pollShell(int controlFd, struct Buffer *buffer) {
     }
     buffer->data[i] = 0;
 
-    if (i > 0) {
-        printf("Reading %d bytes from control: [", i);
-        for (int j = 0; j < i; j++) {
-            if (isprint(buffer->data[j])) {
-                printf("%c", buffer->data[j]);
-            } else {
-                printf("\\x%x", buffer->data[j]);
-            }
-        }
-        printf("]\n");
-    }
+    // if (i > 0) {
+    //     printf("Reading %d bytes from control: [", i);
+    //     for (int j = 0; j < i; j++) {
+    //         if (isprint(buffer->data[j])) {
+    //             printf("%c", buffer->data[j]);
+    //         } else {
+    //             printf("\\x%x", buffer->data[j]);
+    //         }
+    //     }
+    //     printf("]\n");
+    // }
 
     return i;
 }
@@ -428,13 +428,21 @@ void updateText(struct RenderContext *context, struct Buffer *buffer) {
     for (int i = 0; i < buffer->length; i++) {
         if (buffer->data[i] == '\0') break;
 
-        int character;
-        if (!processTextByte(buffer->data[i], &character, context)) continue;
+        int character, prevRowOffset = renderContext.glyphIndicesRowOffset;
+        if (!processTextByte(buffer->data[i], &character, context)) {
+            // processTextByte can update the row offset in the case of a newline command. In this case, the previous text
+            // at the next row is cleared.
+            if (renderContext.glyphIndicesRowOffset != prevRowOffset) {
+                int newRowIndex = ((context->cursorPosition.y + renderContext.glyphIndicesRowOffset) % MAX_ROWS) * MAX_CHARACTERS_PER_ROW;
+                memset(&shaderContext->glyphIndices[newRowIndex], 0, MAX_CHARACTERS_PER_ROW);
+            }
+            continue;
+        }
 
         // Reset scroll offset to jump back to current line when there are printed characters.
         renderContext.scrollOffset = 0;
 
-        int glyphIndex = (context->cursorPosition.y + renderContext.glyphIndicesRowOffset) * MAX_CHARACTERS_IN_ROW + context->cursorPosition.x;
+        int glyphIndex = ((context->cursorPosition.y + renderContext.glyphIndicesRowOffset) % MAX_ROWS) * MAX_CHARACTERS_PER_ROW + context->cursorPosition.x;
         shaderContext->glyphIndicesRowOffset = renderContext.glyphIndicesRowOffset;
         shaderContext->glyphIndices[glyphIndex] = context->characterAtlasMap[character];
         shaderContext->glyphColors[glyphIndex] = context->foregroundColor;
@@ -517,7 +525,7 @@ void render(struct RenderContext *context) {
 
 int main(int argc, char** argv) {
     renderContext.screenSize = (struct Vec2i) { .x = 960, .y = 480 };
-    renderContext.fontSize = 20;
+    renderContext.fontSize = 16;
     /*
     fontSize is used to control the actual screen-space size of the rendered text. atlasFontHeight is used to control
     the size of text rendered to the atlas texture. I thought that rendering high resolution glyphs to the atlas texture
@@ -526,7 +534,7 @@ int main(int argc, char** argv) {
 
     Would be nice to do the sampling so that the font size can be changed without recreating the atlas texture.
     */
-    renderContext.atlasFontHeight = 20;
+    renderContext.atlasFontHeight = 16;
     renderContext.atlasTileSize = (struct Vec2i) { .x = 12, .y = 12 };
     renderContext.characterAtlasMap = (int*) malloc(sizeof(int) * renderContext.atlasTileSize.x * renderContext.atlasTileSize.y);
     renderContext.foregroundColor = 0x00FFFFFF;

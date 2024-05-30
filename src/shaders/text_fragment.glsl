@@ -1,6 +1,6 @@
 #version 430
 
-#define MAX_CHARACTERS_IN_ROW 500
+#define MAX_CHARACTERS_PER_ROW 500
 #define MAX_ROWS 1000
 
 layout(std430, binding = 2) buffer TextShaderContext {
@@ -11,9 +11,9 @@ layout(std430, binding = 2) buffer TextShaderContext {
     ivec2 screenTileSize;
     ivec2 atlasTileSize;
     ivec2 screenExcess;
-    uint glyphIndices[MAX_CHARACTERS_IN_ROW * MAX_ROWS];
-    uint glyphColors[MAX_CHARACTERS_IN_ROW * MAX_ROWS];
-    ivec2 glyphOffsets[MAX_CHARACTERS_IN_ROW * MAX_ROWS];
+    uint glyphIndices[MAX_CHARACTERS_PER_ROW * MAX_ROWS];
+    uint glyphColors[MAX_CHARACTERS_PER_ROW * MAX_ROWS];
+    ivec2 glyphOffsets[MAX_CHARACTERS_PER_ROW * MAX_ROWS];
 } context;
 
 uniform sampler2D glyphTexture;
@@ -41,7 +41,7 @@ void main() {
     );
 
     // 1d index of tile.
-    int tileIndex = (tile.y + context.glyphIndicesRowOffset) * MAX_CHARACTERS_IN_ROW + tile.x;
+    int tileIndex = (int(mod(tile.y + context.glyphIndicesRowOffset, MAX_ROWS))) * MAX_CHARACTERS_PER_ROW + tile.x;
 
     // Find 2d tile coordinates of the corresponding glyph.
     uint glyphIndex = context.glyphIndices[tileIndex];
@@ -75,5 +75,5 @@ void main() {
     // outColor = vec4(glyphTile.x / float(context.atlasTileSize.x), glyphTile.y / float(context.atlasTileSize.y), 0.0, 1.0);
     // outColor = vec4(tileOffset.x, tileOffset.y, 0.0, 1.0);
     // outColor = vec4(outOfBoundsMask, 0, 0, 1.0);
-    // if (outColor.a == 0) outColor = vec4(0, tileIndex / float(MAX_CHARACTERS_IN_ROW) / 50, 0.0, 1.0);
+    // if (outColor.a == 0) outColor = vec4(0, tileIndex / float(MAX_CHARACTERS_PER_ROW) / 50, 0.0, 1.0);
 };

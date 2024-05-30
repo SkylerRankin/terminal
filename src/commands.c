@@ -70,9 +70,9 @@ static void executeC0ControlCode(u8 byte);
 
 int processTextByte(u8 byte, int *character) {
     switch (state.currentStage) {
-        case STAGE_PLAIN_TEXT:      return handleStagePlainText(byte, character);
-        case STAGE_ESCAPE:          return handleStageEscape(byte, character);
-        case STAGE_ARGUMENTS:        return handleStageArguments(byte, character);
+        case STAGE_PLAIN_TEXT:  return handleStagePlainText(byte, character);
+        case STAGE_ESCAPE:      return handleStageEscape(byte, character);
+        case STAGE_ARGUMENTS:   return handleStageArguments(byte, character);
         default:
             return 0;
     }
@@ -143,14 +143,11 @@ static void executeC0ControlCode(u8 byte) {
             // row offset is incremented.
             if (renderContext.cursorPosition.y >= renderContext.screenTileSize.y) {
                 renderContext.cursorPosition.y = renderContext.screenTileSize.y - 1;
-                // TODO: mod offset with max rows? this way the row offset doesn't need to increase forever unnecessarily
-                renderContext.glyphIndicesRowOffset++;
+                renderContext.glyphIndicesRowOffset = (renderContext.glyphIndicesRowOffset + 1) % MAX_ROWS;
             }
-            printf("0xA: new cursor = (%d, %d)\n", renderContext.cursorPosition.x, renderContext.cursorPosition.y);
             break;
         case 0xD:
             renderContext.cursorPosition.x = 0;
-            printf("0xD: new cursor = (%d, %d)\n", renderContext.cursorPosition.x, renderContext.cursorPosition.y);
             break;
     }
 }
