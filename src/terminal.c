@@ -365,10 +365,15 @@ void renderSetup(struct RenderContext *renderContext) {
     glEnableVertexAttribArray(vertexPositionLocation);
     glVertexAttribPointer(vertexPositionLocation, 3, GL_FLOAT, GL_FALSE, 5 * sizeof(float), (void*) 0);
 
+    GLuint paddingTransformLocation = glGetUniformLocation(program, "paddingTransform");
+
+    glUniform2f(glGetUniformLocation(program, "windowPadding"), renderContext->windowPadding[2], renderContext->windowPadding[0]);
+
     renderContext->window = window;
     renderContext->programId = program;
     renderContext->vaoId = vao;
     renderContext->atlasTextureId = texture;
+    renderContext->paddingTransformLocation = paddingTransformLocation;
 }
 
 void sendKeyInputToShell(int controlFd, struct RenderContext *context) {
@@ -459,10 +464,38 @@ void updateText(struct RenderContext *context, struct Buffer *buffer) {
     glUnmapBuffer(GL_SHADER_STORAGE_BUFFER);
 }
 
+void updatePaddingTransform() {
+    const float desiredWidth = renderContext.screenSize.x - renderContext.windowPadding[2] - renderContext.windowPadding[3];
+    const float desiredHeight = renderContext.screenSize.y - renderContext.windowPadding[0] - renderContext.windowPadding[1];
+
+    const float scaleF[3] = {
+        desiredWidth / renderContext.screenSize.x,
+        desiredHeight / renderContext.screenSize.y,
+        1
+    };
+
+    float ux = 1 / (desiredWidth / 2);
+    float uy = 1 / (desiredHeight / 2);
+
+    const float translateF[3] = {
+        -ux * (renderContext.screenSize.x / 2 - (desiredWidth / 2) - renderContext.windowPadding[2]),
+        uy * (renderContext.screenSize.y / 2 - (desiredHeight / 2) - renderContext.windowPadding[0]),
+        0
+    };
+
+    mat4 mat;
+    glm_mat4_identity(mat);
+    glm_scale(mat, (float*) scaleF);
+    glm_translate(mat, (float*) translateF);
+    glm_mat4_copy(mat, renderContext.paddingTransform);
+}
+
 void onWindowResize(struct RenderContext* context, int newWidth, int newHeight) {
-    glUniform2f(glGetUniformLocation(context->programId, "resolution"), newWidth, newHeight);
     context->screenSize.x = newWidth;
     context->screenSize.y = newHeight;
+
+    newWidth -= renderContext.windowPadding[2] + renderContext.windowPadding[3];
+    newHeight -= renderContext.windowPadding[0] + renderContext.windowPadding[1];
 
     context->screenTileSize = (struct Vec2i) {
         .x = newWidth / context->screenGlyphSize.x,
@@ -481,6 +514,9 @@ void onWindowResize(struct RenderContext* context, int newWidth, int newHeight) 
     if (context->cursorPosition.y >= context->screenTileSize.y) {
         context->cursorPosition.y = context->screenTileSize.y - 1;
     }
+
+    updatePaddingTransform();
+    glUniformMatrix4fv(renderContext.paddingTransformLocation, 1, GL_FALSE, (GLfloat*) renderContext.paddingTransform);
 
     // Update size related information in the shader context.
     glBindBuffer(GL_SHADER_STORAGE_BUFFER, context->shaderContextId);
@@ -525,6 +561,11 @@ void render(struct RenderContext *context) {
 
 int main(int argc, char** argv) {
     renderContext.screenSize = (struct Vec2i) { .x = 960, .y = 480 };
+    renderContext.windowPadding[0] = 10;
+    renderContext.windowPadding[1] = 10;
+    renderContext.windowPadding[2] = 10;
+    renderContext.windowPadding[3] = 20;
+
     renderContext.fontSize = 16;
     /*
     fontSize is used to control the actual screen-space size of the rendered text. atlasFontHeight is used to control

@@ -4,6 +4,8 @@
 #include <GLFW/glfw3.h>
 #include "../lib/glad/glad.h"
 
+#include <cglm/cglm.h>
+
 #define MAX_CHARACTERS_PER_ROW 500
 #define MAX_ROWS 1000
 
@@ -23,6 +25,8 @@ struct RenderContext {
     struct Vec2i cursorPosition;
     struct KeyBuffer keyBuffer;
     int scrollOffset;
+    // Pixel values for padding, [top, bottom, left, right]
+    int windowPadding[4];
 
     // Psuedo-terminal information
     int controlFd;
@@ -32,6 +36,8 @@ struct RenderContext {
     GLuint vaoId;
     GLuint shaderContextId;
     GLuint atlasTextureId;
+    GLuint paddingTransformLocation;
+    mat4 paddingTransform;
 
     // Glyph atlas information
     int* characterAtlasMap;

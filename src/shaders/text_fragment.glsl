@@ -17,15 +17,20 @@ layout(std430, binding = 2) buffer TextShaderContext {
 } context;
 
 uniform sampler2D glyphTexture;
-uniform vec2 resolution;
+uniform vec2 windowPadding;
 out vec4 outColor;
 
 void main() {
+    vec2 screenPosition = vec2(
+        gl_FragCoord.x - windowPadding.x,
+        gl_FragCoord.y - windowPadding.y
+    );
+
     // Setup constants
     vec2 glyphTextureSize = context.atlasTileSize * context.atlasGlyphSize;
     vec2 pixelPosition = vec2(
-        gl_FragCoord.x,
-        gl_FragCoord.y - context.screenExcess.y
+        screenPosition.x,
+        screenPosition.y - context.screenExcess.y
     );
 
     // Tile coordinate in range [0, num_rows/columns).
@@ -37,7 +42,7 @@ void main() {
     // Mask for pixels that are not within a full glyph tile.
     int outOfBoundsMask = 1 - max(
         max(0, sign(tile.x - context.screenTileSize.x + 1)),
-        max(0, 1 - sign(int(gl_FragCoord.y) - context.screenExcess.y + 1))
+        max(0, 1 - sign(int(screenPosition.y) - context.screenExcess.y + 1))
     );
 
     // 1d index of tile.
