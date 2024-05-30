@@ -135,7 +135,18 @@ static int handleStageArguments(u8 byte, int *character) {
 
 static void executeC0ControlCode(u8 byte) {
     switch (byte) {
-        case 0xA:
+        case 0x7: // Bell sound
+            printf("~bell sound~\n");
+            break;
+        case 0x8: // Backspace
+            if (renderContext.cursorPosition.x > 0) {
+                renderContext.cursorPosition.x -= 1;
+            }
+            break;
+        case 0x9: // Tab
+            renderContext.cursorPosition.x = renderContext.cursorPosition.x - (renderContext.cursorPosition.x % 8) + 8;
+            break;
+        case 0xA: // Line feed
             renderContext.cursorPosition.x = 0;
             renderContext.cursorPosition.y += 1;
 
@@ -146,7 +157,7 @@ static void executeC0ControlCode(u8 byte) {
                 renderContext.glyphIndicesRowOffset = (renderContext.glyphIndicesRowOffset + 1) % MAX_ROWS;
             }
             break;
-        case 0xD:
+        case 0xD: // Carriage return
             renderContext.cursorPosition.x = 0;
             break;
     }
@@ -177,6 +188,15 @@ static void updateGraphicsState(int command, int index) {
 
 }
 
+static void eraseScreenRect(int xStart, int xEnd, int yStart, int yEnd) {
+    for (int y = yStart; y <= yEnd; y++) {
+        int rowOffset = ((y + renderContext.glyphIndicesRowOffset) % MAX_ROWS) * MAX_CHARACTERS_PER_ROW;
+        for (int x = xStart; x <= xEnd; x++) {
+            renderContext.shaderContext->glyphIndices[rowOffset + x] = 0;
+        }
+    }
+}
+
 /**
  * CSI commands start with ESC[ and are followed by the following sections:
  *      1. Bytes in the range 0x30 – 0x3F
@@ -195,22 +215,152 @@ static int executeCSICommandArgument() {
         return 0;
     }
 
-    if (lastByte == 'm') {
-        printf("executing csi m command: %s\n", state.argBuffer.data);
-        int value = 0;
-        int argumentIndex = 0;
+    // Some CSI commands contain a list of semi-colon-separated integers used as arguments.
+    const int maxCSIArguments = 20;
+    int numArgs = 0;
+    int args[maxCSIArguments];
+    if ((lastByte >= 'A' && lastByte <= 'H') || lastByte == 'J' || lastByte == 'K' || lastByte == 'S' || lastByte == 'T' || lastByte == 'm') {
+        int argIndex = 0, value = 0, parsingValue = 0;
         for (int i = 0; i < state.argBuffer.position; i++) {
             const u8 c = state.argBuffer.data[i];
-            if (c == ';' || c == 'm') {
-                updateGraphicsState(value, argumentIndex);
+            if (c == ';' || c == lastByte) {
+                if (parsingValue) {
+                    args[argIndex] = value;
+                    argIndex++;
+                }
                 value = 0;
-                argumentIndex++;
+                parsingValue = 0;
+
+                if (argIndex >= maxCSIArguments) {
+                    printf("CSI command buffer filled, commands contains more than %d integer arguments: %s\n", maxCSIArguments, state.argBuffer.data);
+                    break;
+                }
             } else {
                 value = (value * 10) + (c - 0x30);
+                parsingValue = 1;
             }
         }
-    } else {
-        printf("unsupported csi command: %s\n", state.argBuffer.data);
+        numArgs = argIndex;
+    }
+
+    switch (lastByte) {
+        case 'A': { // Cursor up
+            int n = numArgs == 0 ? 1 : args[0];
+            renderContext.cursorPosition.y -= n;
+            if (renderContext.cursorPosition.y < 0) {
+                renderContext.cursorPosition.y = 0;
+            }
+            break;
+        }
+        case 'B': { // Cursor down
+            int n = numArgs == 0 ? 1 : args[0];
+            renderContext.cursorPosition.y += n;
+            if (renderContext.cursorPosition.y > renderContext.screenTileSize.y - 1) {
+                renderContext.cursorPosition.y = renderContext.screenTileSize.y - 1;
+            }
+            break;
+        }
+        case 'C': { // Cursor forward
+            int n = numArgs == 0 ? 1 : args[0];
+            renderContext.cursorPosition.x += n;
+            if (renderContext.cursorPosition.x > renderContext.screenTileSize.x - 1) {
+                renderContext.cursorPosition.x = renderContext.screenTileSize.x - 1;
+            }
+            break;
+        }
+        case 'D': { // Cursor back
+            int n = numArgs == 0 ? 1 : args[0];
+            renderContext.cursorPosition.x -= n;
+            if (renderContext.cursorPosition.x < 0) {
+                renderContext.cursorPosition.x = 0;
+            }
+            break;
+        }
+        case 'E': { // Cursor next line
+            int n = numArgs == 0 ? 1 : args[0];
+            if (renderContext.cursorPosition.y + n < renderContext.screenTileSize.y) {
+                renderContext.cursorPosition.x = 0;
+                renderContext.cursorPosition.y += n;
+            }
+            break;
+        }
+        case 'F': { // Cursor previous line
+            int n = numArgs == 0 ? 1 : args[0];
+            if (renderContext.cursorPosition.y - n >= 0) {
+                renderContext.cursorPosition.x = 0;
+                renderContext.cursorPosition.y -= n;
+            }
+            break;
+        }
+        case 'G': { // Cursor horizontal absolute
+            int n = numArgs == 0 ? 0 : args[0];
+            if (n < renderContext.screenTileSize.x) {
+                renderContext.cursorPosition.x = n;
+            }
+            break;
+        }
+        case 'H': { // Cursor position
+            // TODO: doesn't handle cases like CSI ;5H, which should use column 1 as the default x value.
+            int x = numArgs == 1 ? args[0] - 1 : 0;
+            int y = numArgs == 2 ? args[1] - 1 : 0;
+            if (x < renderContext.screenTileSize.x && y < renderContext.screenTileSize.y) {
+                renderContext.cursorPosition.x = x;
+                renderContext.cursorPosition.y = y;
+            }
+            break;
+        }
+        case 'J': { // Erase in display
+            int n = numArgs == 1 ? args[0] : 0;
+            if (n == 0) {
+                // Erase from cursor to end of screen
+                eraseScreenRect(renderContext.cursorPosition.x, renderContext.screenTileSize.x - 1, renderContext.cursorPosition.y, renderContext.cursorPosition.y);
+                eraseScreenRect(0, renderContext.screenTileSize.x - 1, 0, renderContext.cursorPosition.y - 1);
+            } else if (n == 1) {
+                // Erase from start of screen to cursor
+                eraseScreenRect(0, renderContext.cursorPosition.x, renderContext.cursorPosition.y, renderContext.cursorPosition.y);
+                eraseScreenRect(0, renderContext.screenTileSize.x - 1, renderContext.cursorPosition.y + 1, renderContext.screenTileSize.y - 1);
+            } else if (n == 2) {
+                // Erase whole screen
+                eraseScreenRect(0, renderContext.screenTileSize.x - 1, 0, renderContext.screenTileSize.y - 1);
+            } else if (n == 3) {
+                // Erase whole screen and scrollback buffer
+                eraseScreenRect(0, renderContext.screenTileSize.x - 1, 0, renderContext.screenTileSize.y - 1);
+                // TODO: erase back buffer
+            }
+            break;
+        }
+        case 'K': { // Erase in line
+            int n = numArgs == 1 ? args[0] : 0;
+            if (n == 0) {
+                // Erase from cursor to end of line
+                eraseScreenRect(renderContext.cursorPosition.x, renderContext.screenTileSize.x - 1, renderContext.cursorPosition.y, renderContext.cursorPosition.y);
+            } else if (n == 1) {
+                // Erase from start of line to cursor
+                eraseScreenRect(0, renderContext.cursorPosition.x, renderContext.cursorPosition.y, renderContext.cursorPosition.y);
+            } else if (n == 2) {
+                // Erase entire line
+                eraseScreenRect(0, renderContext.screenTileSize.x - 1, renderContext.cursorPosition.y, renderContext.cursorPosition.y);
+            }
+            break;
+        }
+        case 'S': { // Scroll up
+            int n = numArgs == 1 ? args[0] : 1;
+            printf("CSI S (%d) not implemented\n", n);
+            break;
+        }
+        case 'T': { // Scroll down
+            int n = numArgs == 1 ? args[0] : 1;
+            printf("CSI T (%d) not implemented\n", n);
+            break;
+        }
+        case 'm': { // Graphics control
+            for (int i = 0; i < numArgs; i++) {
+                updateGraphicsState(args[i], i);
+            }
+            break;
+        }
+        default:
+            printf("unsupported csi command: %s\n", state.argBuffer.data);
     }
 
     return 1;

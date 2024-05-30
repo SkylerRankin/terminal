@@ -37,6 +37,10 @@ static void keyCallback(GLFWwindow* window, int key, int scancode, int action, i
     } else if (action == GLFW_PRESS || action == GLFW_REPEAT) {
         if (key == GLFW_KEY_ENTER) {
             key = 0xD;
+        } else if (key == GLFW_KEY_TAB) {
+            key = 0x9;
+        } else if (key == GLFW_KEY_BACKSPACE) {
+            key = 0x8;
         } else if (key >= 65 && key <= 90) {
             int shift = mods & GLFW_MOD_SHIFT;
             if (!shift) {
@@ -49,20 +53,19 @@ static void keyCallback(GLFWwindow* window, int key, int scancode, int action, i
             }
         }
 
-        if ((key >= 32 && key <= 126) || key == 0xD || key == 0x3) {
+        if ((key >= 32 && key <= 126) || key == 0xD || key == 0x3 || key == 0x9 || key == 0x8) {
             bufferKey = 1;
         }
     }
 
     if (bufferKey) {
-        struct RenderContext *context = (struct RenderContext*) glfwGetWindowUserPointer(window);
-        int current = context->keyBuffer.currentIndex;
-        if (current >= context->keyBuffer.length) {
+        int current = renderContext.keyBuffer.currentIndex;
+        if (current >= renderContext.keyBuffer.length) {
             printf("Exceeded key input buffer.\n");
             exit(-1);
         }
-        context->keyBuffer.data[current] = key;
-        context->keyBuffer.currentIndex += 1;
+        renderContext.keyBuffer.data[current] = key;
+        renderContext.keyBuffer.currentIndex += 1;
     }
 }
 
@@ -79,11 +82,7 @@ static void scrollCallback(GLFWwindow *window, double xOffset, double yOffset) {
     }
 
     if (updateShaderBuffer) {
-        glBindBuffer(GL_SHADER_STORAGE_BUFFER, renderContext.shaderContextId);
-        GLvoid *ssboPointer = glMapBufferRange(GL_SHADER_STORAGE_BUFFER, 0, sizeof(struct TextShaderContext), GL_MAP_WRITE_BIT);
-        struct TextShaderContext *shaderContext = (struct TextShaderContext*) ssboPointer;
-        shaderContext->glyphIndicesRowOffset = renderContext.glyphIndicesRowOffset - renderContext.scrollOffset;
-        glUnmapBuffer(GL_SHADER_STORAGE_BUFFER);
+        renderContext.shaderContext->glyphIndicesRowOffset = renderContext.glyphIndicesRowOffset - renderContext.scrollOffset;
     }
 }
 
@@ -110,7 +109,7 @@ char* buildRelativePath(char *path) {
     return pathBuffer;
 }
 
-GLuint generateGlyphAtlas(GLuint shaderContextId, struct RenderContext *renderContext) {
+GLuint generateGlyphAtlas(GLuint shaderContextId) {
     FT_Library library;
     if (FT_Init_FreeType(&library)) {
         printf("Failed to init freetype.\n");
@@ -125,25 +124,25 @@ GLuint generateGlyphAtlas(GLuint shaderContextId, struct RenderContext *renderCo
     }
     free(fontPath);
 
-    if (FT_Set_Pixel_Sizes(face, 0, renderContext->fontSize)) {
+    if (FT_Set_Pixel_Sizes(face, 0, renderContext.fontSize)) {
         printf("Failed to set font size.\n");
         exit(-1);
     }
-    renderContext->screenGlyphSize = (struct Vec2i) {
+    renderContext.screenGlyphSize = (struct Vec2i) {
         .x = face->size->metrics.max_advance >> 6,
         .y = face->size->metrics.height >> 6
     };
 
-    if (FT_Set_Pixel_Sizes(face, 0, renderContext->atlasFontHeight)) {
+    if (FT_Set_Pixel_Sizes(face, 0, renderContext.atlasFontHeight)) {
         printf("Failed to set font size.\n");
         exit(-1);
     }
-    renderContext->atlasGlyphSize = (struct Vec2i) {
+    renderContext.atlasGlyphSize = (struct Vec2i) {
         .x = face->size->metrics.max_advance >> 6,
         .y = face->size->metrics.height >> 6
     };
 
-    glBindBuffer(GL_SHADER_STORAGE_BUFFER, renderContext->shaderContextId);
+    glBindBuffer(GL_SHADER_STORAGE_BUFFER, renderContext.shaderContextId);
     GLvoid *ssboPointer = glMapBufferRange(GL_SHADER_STORAGE_BUFFER, 0, sizeof(struct TextShaderContext), GL_MAP_WRITE_BIT);
     struct TextShaderContext *shaderContext = (struct TextShaderContext*) ssboPointer;
 
@@ -165,17 +164,17 @@ GLuint generateGlyphAtlas(GLuint shaderContextId, struct RenderContext *renderCo
 
     printf(
         "Max glyph dimensions are (%ld, %ld), screen glyph size is (%d, %d), atlas glyph size is (%d, %d).\n",
-        maxWidth, maxHeight, renderContext->screenGlyphSize.x, renderContext->screenGlyphSize.y, renderContext->atlasGlyphSize.x, renderContext->atlasGlyphSize.y);
+        maxWidth, maxHeight, renderContext.screenGlyphSize.x, renderContext.screenGlyphSize.y, renderContext.atlasGlyphSize.x, renderContext.atlasGlyphSize.y);
 
     GLuint texture;
     glGenTextures(1, &texture);
     glBindTexture(GL_TEXTURE_2D, texture);
-    glTexImage2D(GL_TEXTURE_2D, 0, GL_RED, renderContext->atlasTileSize.x * renderContext->atlasGlyphSize.x, renderContext->atlasTileSize.y * renderContext->atlasGlyphSize.y, 0, GL_RED, GL_UNSIGNED_BYTE, 0);
+    glTexImage2D(GL_TEXTURE_2D, 0, GL_RED, renderContext.atlasTileSize.x * renderContext.atlasGlyphSize.x, renderContext.atlasTileSize.y * renderContext.atlasGlyphSize.y, 0, GL_RED, GL_UNSIGNED_BYTE, 0);
     glPixelStorei(GL_UNPACK_ALIGNMENT, 1);
 
     int nextTileX = 1;
     int nextTileY = 0;
-    char *flippedBitmap = malloc(sizeof(char) * renderContext->atlasGlyphSize.x * renderContext->atlasGlyphSize.y);
+    char *flippedBitmap = malloc(sizeof(char) * renderContext.atlasGlyphSize.x * renderContext.atlasGlyphSize.y);
 
     for (int asciiCode = 33; asciiCode <= 126; asciiCode++) {
         FT_UInt glyphIndex = FT_Get_Char_Index(face, asciiCode);
@@ -188,18 +187,18 @@ GLuint generateGlyphAtlas(GLuint shaderContextId, struct RenderContext *renderCo
         unsigned int bitmapWidth = face->glyph->bitmap.width;
         unsigned int bitmapHeight = face->glyph->bitmap.rows;
 
-        memset(flippedBitmap, 0, renderContext->atlasGlyphSize.x * renderContext->atlasGlyphSize.y);
+        memset(flippedBitmap, 0, renderContext.atlasGlyphSize.x * renderContext.atlasGlyphSize.y);
         for (int x = 0; x < bitmapWidth; x++) {
             for (int y = 0; y < bitmapHeight; y++) {
-                flippedBitmap[y * renderContext->atlasGlyphSize.x + x] = bitmap->buffer[(bitmapHeight - y - 1) * bitmapWidth + x];
+                flippedBitmap[y * renderContext.atlasGlyphSize.x + x] = bitmap->buffer[(bitmapHeight - y - 1) * bitmapWidth + x];
             }
         }
 
         // Each glyph is written to the bottom left of a rectangle whose width is the horizontal advance and whose height is the line height.
-        glTexSubImage2D(GL_TEXTURE_2D, 0, nextTileX * renderContext->atlasGlyphSize.x, nextTileY * renderContext->atlasGlyphSize.y, renderContext->atlasGlyphSize.x, renderContext->atlasGlyphSize.y, GL_RED, GL_UNSIGNED_BYTE, flippedBitmap);
-        renderContext->characterAtlasMap[asciiCode] = nextTileY * renderContext->atlasTileSize.x + nextTileX;
+        glTexSubImage2D(GL_TEXTURE_2D, 0, nextTileX * renderContext.atlasGlyphSize.x, nextTileY * renderContext.atlasGlyphSize.y, renderContext.atlasGlyphSize.x, renderContext.atlasGlyphSize.y, GL_RED, GL_UNSIGNED_BYTE, flippedBitmap);
+        renderContext.characterAtlasMap[asciiCode] = nextTileY * renderContext.atlasTileSize.x + nextTileX;
         nextTileX += 1;
-        if (nextTileX >= renderContext->atlasTileSize.x) {
+        if (nextTileX >= renderContext.atlasTileSize.x) {
             nextTileX = 0;
             nextTileY += 1;
         }
@@ -285,7 +284,7 @@ GLuint compileShader(char* shaderPath, GLenum shaderType) {
     return shader;
 }
 
-void renderSetup(struct RenderContext *renderContext) {
+void renderSetup() {
     if (glfwInit() == GLFW_FALSE) {
         printf("Failed to init GLFW.\n");
         exit(-1);
@@ -296,12 +295,11 @@ void renderSetup(struct RenderContext *renderContext) {
     glfwWindowHint(GLFW_CONTEXT_VERSION_MINOR, 3);
     glfwWindowHint(GLFW_OPENGL_PROFILE, GLFW_OPENGL_CORE_PROFILE);
 
-    GLFWwindow* window = glfwCreateWindow(renderContext->screenSize.x, renderContext->screenSize.y, "terminal", 0, 0);
+    GLFWwindow* window = glfwCreateWindow(960, 480, "terminal", 0, 0);
     if (!window) {
         printf("GLFW failed to create window.\n");
         exit(-1);
     }
-    glfwSetWindowUserPointer(window, renderContext);
     glfwSetWindowSizeLimits(window, 300, 20, GLFW_DONT_CARE, GLFW_DONT_CARE);
     glfwSetKeyCallback(window, keyCallback);
     glfwSetScrollCallback(window, scrollCallback);
@@ -348,9 +346,9 @@ void renderSetup(struct RenderContext *renderContext) {
     const int shaderContextIndex = 2;
     glBindBufferBase(GL_SHADER_STORAGE_BUFFER, shaderContextIndex, shaderContextId);
     glBindBuffer(GL_SHADER_STORAGE_BUFFER, 0);
-    renderContext->shaderContextId = shaderContextId;
+    renderContext.shaderContextId = shaderContextId;
 
-    GLuint texture = generateGlyphAtlas(shaderContextId, renderContext);
+    GLuint texture = generateGlyphAtlas(shaderContextId);
 
     const GLuint vertexShader = compileShader("shaders/text_vertex.glsl", GL_VERTEX_SHADER);
     const GLuint fragmentShader = compileShader("shaders/text_fragment.glsl", GL_FRAGMENT_SHADER);
@@ -367,29 +365,33 @@ void renderSetup(struct RenderContext *renderContext) {
 
     GLuint paddingTransformLocation = glGetUniformLocation(program, "paddingTransform");
 
-    glUniform2f(glGetUniformLocation(program, "windowPadding"), renderContext->windowPadding[2], renderContext->windowPadding[0]);
+    glUniform2f(glGetUniformLocation(program, "windowPadding"), renderContext.windowPadding[2], renderContext.windowPadding[0]);
 
-    renderContext->window = window;
-    renderContext->programId = program;
-    renderContext->vaoId = vao;
-    renderContext->atlasTextureId = texture;
-    renderContext->paddingTransformLocation = paddingTransformLocation;
+    renderContext.window = window;
+    renderContext.programId = program;
+    renderContext.vaoId = vao;
+    renderContext.atlasTextureId = texture;
+    renderContext.paddingTransformLocation = paddingTransformLocation;
 }
 
-void sendKeyInputToShell(int controlFd, struct RenderContext *context) {
-    context->keyBuffer.data[context->keyBuffer.currentIndex] = '\0';
-    write(controlFd, context->keyBuffer.data, context->keyBuffer.currentIndex);
-    // printf("writing %d bytes to control: [", context->keyBuffer.currentIndex);
-    // for (int i = 0; i < context->keyBuffer.currentIndex; i++) {
-    //     if (isprint(context->keyBuffer.data[i])) {
-    //         printf("%c", context->keyBuffer.data[i]);
-    //     } else {
-    //         printf("\\x%x", context->keyBuffer.data[i]);
-    //     }
-    // }
-    // printf("]\n");
+void sendKeyInputToShell() {
+    renderContext.keyBuffer.data[renderContext.keyBuffer.currentIndex] = '\0';
+    write(renderContext.controlFd, renderContext.keyBuffer.data, renderContext.keyBuffer.currentIndex);
 
-    context->keyBuffer.currentIndex = 0;
+    int logBytes = 0;
+    if (logBytes) {
+        printf("writing %d bytes to control: [", renderContext.keyBuffer.currentIndex);
+        for (int i = 0; i < renderContext.keyBuffer.currentIndex; i++) {
+            if (isprint(renderContext.keyBuffer.data[i])) {
+                printf("%c", renderContext.keyBuffer.data[i]);
+            } else {
+                printf("\\x%x", renderContext.keyBuffer.data[i]);
+            }
+        }
+        printf("]\n");
+    }
+
+    renderContext.keyBuffer.currentIndex = 0;
 }
 
 int pollShell(int controlFd, struct Buffer *buffer) {
@@ -420,26 +422,24 @@ int pollShell(int controlFd, struct Buffer *buffer) {
     return i;
 }
 
-void updateText(struct RenderContext *context, struct Buffer *buffer) {
-    glBindBuffer(GL_SHADER_STORAGE_BUFFER, context->shaderContextId);
-    GLvoid *ssboPointer = glMapBufferRange(GL_SHADER_STORAGE_BUFFER, 0, sizeof(struct TextShaderContext), GL_MAP_WRITE_BIT);
-    struct TextShaderContext *shaderContext = (struct TextShaderContext*) ssboPointer;
+void updateText(struct Buffer *buffer) {
+    struct TextShaderContext *shaderContext = renderContext.shaderContext;
 
     // Should these be updated every time?
-    shaderContext->atlasGlyphSize = context->atlasGlyphSize;
-    shaderContext->screenGlyphSize = context->screenGlyphSize;
-    shaderContext->atlasTileSize = context->atlasTileSize;
+    shaderContext->atlasGlyphSize = renderContext.atlasGlyphSize;
+    shaderContext->screenGlyphSize = renderContext.screenGlyphSize;
+    shaderContext->atlasTileSize = renderContext.atlasTileSize;
 
     for (int i = 0; i < buffer->length; i++) {
         if (buffer->data[i] == '\0') break;
 
         int character, prevRowOffset = renderContext.glyphIndicesRowOffset;
-        if (!processTextByte(buffer->data[i], &character, context)) {
+        if (!processTextByte(buffer->data[i], &character)) {
             // processTextByte can update the row offset in the case of a newline command. In this case, the previous text
             // at the next row is cleared.
             if (renderContext.glyphIndicesRowOffset != prevRowOffset) {
-                int newRowIndex = ((context->cursorPosition.y + renderContext.glyphIndicesRowOffset) % MAX_ROWS) * MAX_CHARACTERS_PER_ROW;
-                memset(&shaderContext->glyphIndices[newRowIndex], 0, MAX_CHARACTERS_PER_ROW);
+                int newRowIndex = ((renderContext.cursorPosition.y + renderContext.glyphIndicesRowOffset) % MAX_ROWS) * MAX_CHARACTERS_PER_ROW;
+                memset(&shaderContext->glyphIndices[newRowIndex], 0, MAX_CHARACTERS_PER_ROW * sizeof(int));
             }
             continue;
         }
@@ -447,21 +447,19 @@ void updateText(struct RenderContext *context, struct Buffer *buffer) {
         // Reset scroll offset to jump back to current line when there are printed characters.
         renderContext.scrollOffset = 0;
 
-        int glyphIndex = ((context->cursorPosition.y + renderContext.glyphIndicesRowOffset) % MAX_ROWS) * MAX_CHARACTERS_PER_ROW + context->cursorPosition.x;
+        int glyphIndex = ((renderContext.cursorPosition.y + renderContext.glyphIndicesRowOffset) % MAX_ROWS) * MAX_CHARACTERS_PER_ROW + renderContext.cursorPosition.x;
         shaderContext->glyphIndicesRowOffset = renderContext.glyphIndicesRowOffset;
-        shaderContext->glyphIndices[glyphIndex] = context->characterAtlasMap[character];
-        shaderContext->glyphColors[glyphIndex] = context->foregroundColor;
+        shaderContext->glyphIndices[glyphIndex] = renderContext.characterAtlasMap[character];
+        shaderContext->glyphColors[glyphIndex] = renderContext.foregroundColor;
 
-        context->cursorPosition.x++;
+        renderContext.cursorPosition.x++;
 
         // TODO: this is kind of performing line wrapping...should that be handled here?
-        if (context->cursorPosition.x >= context->screenTileSize.x) {
-            context->cursorPosition.x = 0;
-            context->cursorPosition.y++;
+        if (renderContext.cursorPosition.x >= renderContext.screenTileSize.x) {
+            renderContext.cursorPosition.x = 0;
+            renderContext.cursorPosition.y++;
         }
     }
-
-    glUnmapBuffer(GL_SHADER_STORAGE_BUFFER);
 }
 
 void updatePaddingTransform() {
@@ -490,82 +488,71 @@ void updatePaddingTransform() {
     glm_mat4_copy(mat, renderContext.paddingTransform);
 }
 
-void onWindowResize(struct RenderContext* context, int newWidth, int newHeight) {
-    context->screenSize.x = newWidth;
-    context->screenSize.y = newHeight;
+void onWindowResize(int newWidth, int newHeight) {
+    renderContext.screenSize.x = newWidth;
+    renderContext.screenSize.y = newHeight;
 
     newWidth -= renderContext.windowPadding[2] + renderContext.windowPadding[3];
     newHeight -= renderContext.windowPadding[0] + renderContext.windowPadding[1];
 
-    context->screenTileSize = (struct Vec2i) {
-        .x = newWidth / context->screenGlyphSize.x,
-        .y = newHeight / context->screenGlyphSize.y
+    renderContext.screenTileSize = (struct Vec2i) {
+        .x = newWidth / renderContext.screenGlyphSize.x,
+        .y = newHeight / renderContext.screenGlyphSize.y
     };
 
     struct Vec2i screenExcess = {
-        .x = newWidth % context->screenGlyphSize.x,
-        .y = newHeight % context->screenGlyphSize.y
+        .x = newWidth % renderContext.screenGlyphSize.x,
+        .y = newHeight % renderContext.screenGlyphSize.y
     };
 
-    if (context->cursorPosition.x >= context->screenTileSize.x) {
-        context->cursorPosition.x = context->screenTileSize.x - 1;
+    if (renderContext.cursorPosition.x >= renderContext.screenTileSize.x) {
+        renderContext.cursorPosition.x = renderContext.screenTileSize.x - 1;
     }
 
-    if (context->cursorPosition.y >= context->screenTileSize.y) {
-        context->cursorPosition.y = context->screenTileSize.y - 1;
+    if (renderContext.cursorPosition.y >= renderContext.screenTileSize.y) {
+        renderContext.cursorPosition.y = renderContext.screenTileSize.y - 1;
     }
 
     updatePaddingTransform();
     glUniformMatrix4fv(renderContext.paddingTransformLocation, 1, GL_FALSE, (GLfloat*) renderContext.paddingTransform);
 
     // Update size related information in the shader context.
-    glBindBuffer(GL_SHADER_STORAGE_BUFFER, context->shaderContextId);
-    GLvoid *ssboPointer = glMapBufferRange(GL_SHADER_STORAGE_BUFFER, 0, sizeof(struct TextShaderContext), GL_MAP_WRITE_BIT);
-    struct TextShaderContext *shaderContext = (struct TextShaderContext*) ssboPointer;
-    shaderContext->screenSize = context->screenSize;
-    shaderContext->screenTileSize = context->screenTileSize;
-    shaderContext->screenExcess = screenExcess;
-    glUnmapBuffer(GL_SHADER_STORAGE_BUFFER);
+    renderContext.shaderContext->screenSize = renderContext.screenSize;
+    renderContext.shaderContext->screenTileSize = renderContext.screenTileSize;
+    renderContext.shaderContext->screenExcess = screenExcess;
 
     // Inform pseudo-terminal of new window size
     struct winsize windowSize = {
-        .ws_col = context->screenTileSize.x,
-        .ws_row = context->screenTileSize.y
+        .ws_col = renderContext.screenTileSize.x,
+        .ws_row = renderContext.screenTileSize.y
     };
-    ioctl(context->controlFd, TIOCGWINSZ, &windowSize);
+    ioctl(renderContext.controlFd, TIOCGWINSZ, &windowSize);
 
     printf("Window size update: (%d, %d), screen tile size = (%d, %d), excess = (%d, %d), cursor = (%d, %d)\n",
-        context->screenSize.x, context->screenSize.y, context->screenTileSize.x, context->screenTileSize.y, screenExcess.x, screenExcess.y, context->cursorPosition.x, context->cursorPosition.y);
+        renderContext.screenSize.x, renderContext.screenSize.y, renderContext.screenTileSize.x, renderContext.screenTileSize.y,
+        screenExcess.x, screenExcess.y, renderContext.cursorPosition.x, renderContext.cursorPosition.y);
 }
 
-void render(struct RenderContext *context) {
-    int width, height;
-    glfwGetFramebufferSize(context->window, &width, &height);
-
-    glViewport(0, 0, width, height);
+void render() {
+    glViewport(0, 0, renderContext.screenSize.x, renderContext.screenSize.y);
     glClear(GL_COLOR_BUFFER_BIT);
 
-    if (width != context->screenSize.x || height != context->screenSize.y) {
-        onWindowResize(context, width, height);
-    }
-
     glActiveTexture(GL_TEXTURE0);
-    glBindTexture(GL_TEXTURE_2D, context->atlasTextureId);
-    glBindVertexArray(context->vaoId);
+    glBindTexture(GL_TEXTURE_2D, renderContext.atlasTextureId);
+    glBindVertexArray(renderContext.vaoId);
     glDrawElements(GL_TRIANGLES, 6, GL_UNSIGNED_INT, 0);
     glBindVertexArray(0);
 
-    glfwSwapBuffers(context->window);
-    glfwPollEvents();
+    glfwSwapBuffers(renderContext.window);
 }
 
 int main(int argc, char** argv) {
-    renderContext.screenSize = (struct Vec2i) { .x = 960, .y = 480 };
+    renderContext.screenSize.x = 0;
+    renderContext.screenSize.y = 0;
     renderContext.windowPadding[0] = 10;
     renderContext.windowPadding[1] = 10;
     renderContext.windowPadding[2] = 10;
     renderContext.windowPadding[3] = 20;
-
     renderContext.fontSize = 16;
     /*
     fontSize is used to control the actual screen-space size of the rendered text. atlasFontHeight is used to control
@@ -587,13 +574,10 @@ int main(int argc, char** argv) {
     };
     renderContext.keyBuffer.data = malloc(sizeof(char) * renderContext.keyBuffer.length);
     renderContext.glyphOffsets = malloc(sizeof(struct Vec2i) * renderContext.atlasTileSize.x * renderContext.atlasTileSize.y);
-
-    renderSetup(&renderContext);
-    onWindowResize(&renderContext, renderContext.screenSize.x, renderContext.screenSize.y);
-
     renderContext.cursorPosition.x = 0;
     renderContext.cursorPosition.y = 0;
 
+    renderSetup();
     spawnShell();
 
     struct Buffer shellOutputBuffer;
@@ -602,15 +586,30 @@ int main(int argc, char** argv) {
 
     while (!glfwWindowShouldClose(renderContext.window)) {
         if (renderContext.keyBuffer.currentIndex > 0) {
-            sendKeyInputToShell(renderContext.controlFd, &renderContext);
+            sendKeyInputToShell();
+        }
+
+        glBindBuffer(GL_SHADER_STORAGE_BUFFER, renderContext.shaderContextId);
+        GLvoid *ssboPointer = glMapBufferRange(GL_SHADER_STORAGE_BUFFER, 0, sizeof(struct TextShaderContext), GL_MAP_WRITE_BIT);
+        renderContext.shaderContext = (struct TextShaderContext*) ssboPointer;
+
+        glfwPollEvents();
+
+        int width, height;
+        glfwGetFramebufferSize(renderContext.window, &width, &height);
+        if (width != renderContext.screenSize.x || height != renderContext.screenSize.y) {
+            onWindowResize(width, height);
         }
 
         int bytesRead = pollShell(renderContext.controlFd, &shellOutputBuffer);
         if (bytesRead > 0) {
-            updateText(&renderContext, &shellOutputBuffer);
+            updateText(&shellOutputBuffer);
         }
 
-        render(&renderContext);
+        glUnmapBuffer(GL_SHADER_STORAGE_BUFFER);
+        glBindBuffer(GL_SHADER_STORAGE_BUFFER, 0);
+
+        render();
     }
 
     free(renderContext.characterAtlasMap);

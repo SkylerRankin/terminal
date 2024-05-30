@@ -1,3 +1,3 @@
 #pragma once
 
-int processTextByte(unsigned char byte, int *character, struct RenderContext *context);
+int processTextByte(unsigned char byte, int *character);

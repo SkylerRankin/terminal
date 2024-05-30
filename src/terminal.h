@@ -27,6 +27,9 @@ struct RenderContext {
     int scrollOffset;
     // Pixel values for padding, [top, bottom, left, right]
     int windowPadding[4];
+    // A pointer mapped to the SSBO shader context struct. This pointer is only valid for a
+    // portion of the render loop, as the mapping occurs each frame.
+    struct TextShaderContext *shaderContext;
 
     // Psuedo-terminal information
     int controlFd;
