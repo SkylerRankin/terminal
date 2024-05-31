@@ -35,12 +35,15 @@ struct RenderContext {
     int controlFd;
 
     // OpenGL information
-    GLuint programId;
-    GLuint vaoId;
+    GLuint textProgramId;
+    GLuint cursorProgramId;
+    GLuint textVAO;
+    GLuint cursorVAO;
     GLuint shaderContextId;
     GLuint atlasTextureId;
     GLuint paddingTransformLocation;
-    mat4 paddingTransform;
+    GLuint cursorTransformLocation;
+    GLuint cursorTimeLocation;
 
     // Glyph atlas information
     int* characterAtlasMap;

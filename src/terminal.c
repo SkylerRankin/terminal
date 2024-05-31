@@ -300,6 +300,7 @@ void renderSetup() {
         printf("GLFW failed to create window.\n");
         exit(-1);
     }
+    renderContext.window = window;
     glfwSetWindowSizeLimits(window, 300, 20, GLFW_DONT_CARE, GLFW_DONT_CARE);
     glfwSetKeyCallback(window, keyCallback);
     glfwSetScrollCallback(window, scrollCallback);
@@ -314,31 +315,28 @@ void renderSetup() {
     glEnable(GL_BLEND);
     glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);  
 
-    float vertexData[] = {
-		1, 1, 0, 1, 1,
-		1, -1, 0, 1, 0,
-		-1, -1, 0, 0, 0,
-		-1, 1, 0, 0, 1
+    float rectangleVertices[] = {
+		1, 1, 0,
+		1, -1, 0,
+		-1, -1, 0,
+        -1, 1, 0,
+		1, 1, 0,
+        -1, -1, 0
 	};
 
-	unsigned int indexData[] = {
-		1, 3, 2,
-		1, 0, 3
-	};
+    // Setup vertices and shaders for text area
 
-    GLuint vao, vbo, ebo, shaderContextId;
+    GLuint vao, vbo, shaderContextId;
     glGenVertexArrays(1, &vao);
     glGenBuffers(1, &vbo);
-    glGenBuffers(1, &ebo);
     glGenBuffers(1, &shaderContextId);
+    renderContext.textVAO = vao;
+    renderContext.shaderContextId = shaderContextId;
 
     glBindVertexArray(vao);
 
     glBindBuffer(GL_ARRAY_BUFFER, vbo);
-    glBufferData(GL_ARRAY_BUFFER, sizeof(vertexData), vertexData, GL_STATIC_DRAW);
-
-    glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, ebo);
-    glBufferData(GL_ELEMENT_ARRAY_BUFFER, sizeof(indexData), indexData, GL_STATIC_DRAW);
+    glBufferData(GL_ARRAY_BUFFER, sizeof(rectangleVertices), rectangleVertices, GL_STATIC_DRAW);
 
     glBindBuffer(GL_SHADER_STORAGE_BUFFER, shaderContextId);
     glBufferData(GL_SHADER_STORAGE_BUFFER, sizeof(struct TextShaderContext), 0, GL_DYNAMIC_COPY);
@@ -346,32 +344,54 @@ void renderSetup() {
     const int shaderContextIndex = 2;
     glBindBufferBase(GL_SHADER_STORAGE_BUFFER, shaderContextIndex, shaderContextId);
     glBindBuffer(GL_SHADER_STORAGE_BUFFER, 0);
-    renderContext.shaderContextId = shaderContextId;
 
-    GLuint texture = generateGlyphAtlas(shaderContextId);
+    renderContext.atlasTextureId = generateGlyphAtlas(shaderContextId);
 
-    const GLuint vertexShader = compileShader("shaders/text_vertex.glsl", GL_VERTEX_SHADER);
-    const GLuint fragmentShader = compileShader("shaders/text_fragment.glsl", GL_FRAGMENT_SHADER);
+    const GLuint textVertexShader = compileShader("shaders/text_vertex.glsl", GL_VERTEX_SHADER);
+    const GLuint textFragmentShader = compileShader("shaders/text_fragment.glsl", GL_FRAGMENT_SHADER);
 
-    const GLuint program = glCreateProgram();
-    glAttachShader(program, vertexShader);
-    glAttachShader(program, fragmentShader);
-    glLinkProgram(program);
-    glUseProgram(program);
+    renderContext.textProgramId = glCreateProgram();
+    glAttachShader(renderContext.textProgramId, textVertexShader);
+    glAttachShader(renderContext.textProgramId, textFragmentShader);
+    glLinkProgram(renderContext.textProgramId);
+    glUseProgram(renderContext.textProgramId);
 
-    GLint vertexPositionLocation = glGetAttribLocation(program, "vertexPosition");
+    GLint vertexPositionLocation = glGetAttribLocation(renderContext.textProgramId, "vertexPosition");
     glEnableVertexAttribArray(vertexPositionLocation);
-    glVertexAttribPointer(vertexPositionLocation, 3, GL_FLOAT, GL_FALSE, 5 * sizeof(float), (void*) 0);
+    glVertexAttribPointer(vertexPositionLocation, 3, GL_FLOAT, GL_FALSE, 3 * sizeof(float), (void*) 0);
 
-    GLuint paddingTransformLocation = glGetUniformLocation(program, "paddingTransform");
+    renderContext.paddingTransformLocation = glGetUniformLocation(renderContext.textProgramId, "paddingTransform");
 
-    glUniform2f(glGetUniformLocation(program, "windowPadding"), renderContext.windowPadding[2], renderContext.windowPadding[0]);
+    glUniform2f(glGetUniformLocation(renderContext.textProgramId, "windowPadding"), renderContext.windowPadding[2], renderContext.windowPadding[0]);
 
-    renderContext.window = window;
-    renderContext.programId = program;
-    renderContext.vaoId = vao;
-    renderContext.atlasTextureId = texture;
-    renderContext.paddingTransformLocation = paddingTransformLocation;
+    // Setup vertices and shaders for cursor
+
+    glGenVertexArrays(1, &vao);
+    glGenBuffers(1, &vbo);
+    glBindVertexArray(vao);
+    renderContext.cursorVAO = vao;
+
+    glBindBuffer(GL_ARRAY_BUFFER, vbo);
+    glBufferData(GL_ARRAY_BUFFER, sizeof(rectangleVertices), rectangleVertices, GL_STATIC_DRAW);
+
+    const GLuint cursorVertexShader = compileShader("shaders/cursor_vertex.glsl", GL_VERTEX_SHADER);
+    const GLuint cursorFragmentShader = compileShader("shaders/cursor_fragment.glsl", GL_FRAGMENT_SHADER);
+
+    renderContext.cursorProgramId = glCreateProgram();
+    glAttachShader(renderContext.cursorProgramId, cursorVertexShader);
+    glAttachShader(renderContext.cursorProgramId, cursorFragmentShader);
+    glLinkProgram(renderContext.cursorProgramId);
+    glUseProgram(renderContext.cursorProgramId);
+
+    vertexPositionLocation = glGetAttribLocation(renderContext.cursorProgramId, "vertexPosition");
+    glEnableVertexAttribArray(vertexPositionLocation);
+    glVertexAttribPointer(vertexPositionLocation, 3, GL_FLOAT, GL_FALSE, 3 * sizeof(float), (void*) 0);
+
+    renderContext.cursorTransformLocation = glGetUniformLocation(renderContext.cursorProgramId, "cursorTransform");
+    renderContext.cursorTimeLocation = glGetUniformLocation(renderContext.cursorProgramId, "time");
+
+    glUseProgram(0);
+    glBindVertexArray(0);
 }
 
 void sendKeyInputToShell() {
@@ -485,7 +505,35 @@ void updatePaddingTransform() {
     glm_mat4_identity(mat);
     glm_scale(mat, (float*) scaleF);
     glm_translate(mat, (float*) translateF);
-    glm_mat4_copy(mat, renderContext.paddingTransform);
+    glUniformMatrix4fv(renderContext.paddingTransformLocation, 1, GL_FALSE, (GLfloat*) mat);
+}
+
+void updateCursorTransform() {
+    const float cursorWidth = renderContext.screenGlyphSize.x;
+    const float cursorHeight = renderContext.screenGlyphSize.y;
+
+    const float scaleF[3] = {
+        cursorWidth / renderContext.screenSize.x,
+        cursorHeight / renderContext.screenSize.y,
+        1
+    };
+
+    float ux = 1 / (cursorWidth / 2);
+    float uy = 1 / (cursorHeight / 2);
+
+    const float translateF[3] = {
+        -ux * (renderContext.screenSize.x / 2 - (cursorWidth / 2) - renderContext.windowPadding[2] - renderContext.cursorPosition.x * cursorWidth),
+        uy * (renderContext.screenSize.y / 2 - (cursorHeight / 2) - renderContext.windowPadding[0] - renderContext.cursorPosition.y * cursorHeight),
+        0
+    };
+
+    mat4 mat;
+    glm_mat4_identity(mat);
+    glm_scale(mat, (float*) scaleF);
+    glm_translate(mat, (float*) translateF);
+
+    glUseProgram(renderContext.cursorProgramId);
+    glUniformMatrix4fv(renderContext.cursorTransformLocation, 1, GL_FALSE, (GLfloat*) mat);
 }
 
 void onWindowResize(int newWidth, int newHeight) {
@@ -514,7 +562,6 @@ void onWindowResize(int newWidth, int newHeight) {
     }
 
     updatePaddingTransform();
-    glUniformMatrix4fv(renderContext.paddingTransformLocation, 1, GL_FALSE, (GLfloat*) renderContext.paddingTransform);
 
     // Update size related information in the shader context.
     renderContext.shaderContext->screenSize = renderContext.screenSize;
@@ -539,8 +586,14 @@ void render() {
 
     glActiveTexture(GL_TEXTURE0);
     glBindTexture(GL_TEXTURE_2D, renderContext.atlasTextureId);
-    glBindVertexArray(renderContext.vaoId);
-    glDrawElements(GL_TRIANGLES, 6, GL_UNSIGNED_INT, 0);
+    glBindVertexArray(renderContext.textVAO);
+    glDrawArrays(GL_TRIANGLES, 0, 6);
+
+    glBindVertexArray(renderContext.cursorVAO);
+    glUseProgram(renderContext.cursorProgramId);
+    glUniform1f(renderContext.cursorTimeLocation, (float) glfwGetTime());
+    glDrawArrays(GL_TRIANGLES, 0, 6);
+
     glBindVertexArray(0);
 
     glfwSwapBuffers(renderContext.window);
@@ -589,6 +642,7 @@ int main(int argc, char** argv) {
             sendKeyInputToShell();
         }
 
+        glUseProgram(renderContext.textProgramId);
         glBindBuffer(GL_SHADER_STORAGE_BUFFER, renderContext.shaderContextId);
         GLvoid *ssboPointer = glMapBufferRange(GL_SHADER_STORAGE_BUFFER, 0, sizeof(struct TextShaderContext), GL_MAP_WRITE_BIT);
         renderContext.shaderContext = (struct TextShaderContext*) ssboPointer;
@@ -602,12 +656,17 @@ int main(int argc, char** argv) {
         }
 
         int bytesRead = pollShell(renderContext.controlFd, &shellOutputBuffer);
+        struct Vec2i previousCursorPosition = renderContext.cursorPosition;
         if (bytesRead > 0) {
             updateText(&shellOutputBuffer);
         }
 
         glUnmapBuffer(GL_SHADER_STORAGE_BUFFER);
         glBindBuffer(GL_SHADER_STORAGE_BUFFER, 0);
+
+        if (renderContext.cursorPosition.x != previousCursorPosition.x || renderContext.cursorPosition.y != previousCursorPosition.y) {
+            updateCursorTransform();
+        }
 
         render();
     }
