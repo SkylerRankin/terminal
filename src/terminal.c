@@ -86,10 +86,6 @@ static void scrollCallback(GLFWwindow *window, double xOffset, double yOffset) {
     }
 }
 
-static int intMax(int a, int b) {
-    return a > b ? a : b;
-}
-
 static int intMin(int a, int b) {
     return a < b ? a : b;
 }
@@ -146,17 +142,10 @@ GLuint generateGlyphAtlas(GLuint shaderContextId) {
         exit(-1);
     }
 
-    glBindBuffer(GL_SHADER_STORAGE_BUFFER, renderContext.shaderContextId);
-    GLvoid *ssboPointer = glMapBufferRange(GL_SHADER_STORAGE_BUFFER, 0, sizeof(struct TextShaderContext), GL_MAP_WRITE_BIT);
-    struct TextShaderContext *shaderContext = (struct TextShaderContext*) ssboPointer;
-
     FT_Pos maxWidth = 0, maxHeight = 0, maxAboveBaseline = 0, maxBelowBaseline = 0;
     for (int asciiCode = 33; asciiCode <= 126; asciiCode++) {
         FT_UInt glyphIndex = FT_Get_Char_Index(face, asciiCode);
         FT_Load_Glyph(face, glyphIndex, 0);
-
-        shaderContext->glyphOffsets[asciiCode - 33].x = face->glyph->metrics.horiBearingX >> 6;
-        shaderContext->glyphOffsets[asciiCode - 33].y = face->glyph->metrics.horiBearingY >> 6;
 
         int pixelWidth = face->glyph->metrics.width >> 6;
         int pixelHeight = face->glyph->metrics.height >> 6;
@@ -169,7 +158,6 @@ GLuint generateGlyphAtlas(GLuint shaderContextId) {
         if (aboveBaseline > maxAboveBaseline) maxAboveBaseline = aboveBaseline;
         if (belowBaseline > maxBelowBaseline) maxBelowBaseline = belowBaseline;
     }
-    glUnmapBuffer(GL_SHADER_STORAGE_BUFFER);
 
     renderContext.atlasGlyphSize = (struct Vec2i) {
         .x = face->size->metrics.max_advance >> 6,
@@ -332,6 +320,8 @@ void renderSetup() {
 
     // Background color
     glClearColor(0.156, 0.172, 0.203, 1.0);
+    glClear(GL_COLOR_BUFFER_BIT);
+    glfwSwapBuffers(window);
 
     // Enable blending so text glyphs can cut out background
     glEnable(GL_BLEND);
@@ -564,6 +554,7 @@ void updateCursorTransform() {
 void onWindowResize(int newWidth, int newHeight) {
     renderContext.screenSize.x = newWidth;
     renderContext.screenSize.y = newHeight;
+    glViewport(0, 0, renderContext.screenSize.x, renderContext.screenSize.y);
 
     newWidth -= renderContext.windowPadding[2] + renderContext.windowPadding[3];
     newHeight -= renderContext.windowPadding[0] + renderContext.windowPadding[1];
@@ -606,12 +597,12 @@ void onWindowResize(int newWidth, int newHeight) {
 }
 
 void render() {
-    glViewport(0, 0, renderContext.screenSize.x, renderContext.screenSize.y);
     glClear(GL_COLOR_BUFFER_BIT);
 
     glActiveTexture(GL_TEXTURE0);
     glBindTexture(GL_TEXTURE_2D, renderContext.atlasTextureId);
     glBindVertexArray(renderContext.textVAO);
+    glUseProgram(renderContext.textProgramId);
     glDrawArrays(GL_TRIANGLES, 0, 6);
 
     glBindVertexArray(renderContext.cursorVAO);
@@ -620,6 +611,7 @@ void render() {
     glDrawArrays(GL_TRIANGLES, 0, 6);
 
     glBindVertexArray(0);
+    glUseProgram(0);
 
     glfwSwapBuffers(renderContext.window);
 }
@@ -651,7 +643,6 @@ int main(int argc, char** argv) {
         .data = 0
     };
     renderContext.keyBuffer.data = malloc(sizeof(char) * renderContext.keyBuffer.length);
-    renderContext.glyphOffsets = malloc(sizeof(struct Vec2i) * renderContext.atlasTileSize.x * renderContext.atlasTileSize.y);
     renderContext.cursorPosition.x = 0;
     renderContext.cursorPosition.y = 0;
 
@@ -698,7 +689,6 @@ int main(int argc, char** argv) {
 
     free(renderContext.characterAtlasMap);
     free(renderContext.keyBuffer.data);
-    free(renderContext.glyphOffsets);
     free(shellOutputBuffer.data);
 
     glfwDestroyWindow(renderContext.window);

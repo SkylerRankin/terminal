@@ -57,7 +57,6 @@ struct RenderContext {
     struct Vec2i atlasGlyphSize;
     // Vector containing the number of rows/columns in the atlas texture.
     struct Vec2i atlasTileSize;
-    struct Vec2i *glyphOffsets;
     int foregroundColor;
     int backgroundColor;
     int glyphIndicesRowOffset;
@@ -85,5 +84,4 @@ struct TextShaderContext {
     struct Vec2i screenExcess;
     int glyphIndices[MAX_CHARACTERS_PER_ROW * MAX_ROWS];
     int glyphColors[MAX_CHARACTERS_PER_ROW * MAX_ROWS];
-    struct Vec2i glyphOffsets[MAX_CHARACTERS_PER_ROW * MAX_ROWS];
 };

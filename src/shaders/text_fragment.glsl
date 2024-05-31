@@ -13,7 +13,6 @@ layout(std430, binding = 2) buffer TextShaderContext {
     ivec2 screenExcess;
     uint glyphIndices[MAX_CHARACTERS_PER_ROW * MAX_ROWS];
     uint glyphColors[MAX_CHARACTERS_PER_ROW * MAX_ROWS];
-    ivec2 glyphOffsets[MAX_CHARACTERS_PER_ROW * MAX_ROWS];
 } context;
 
 uniform sampler2D glyphTexture;
@@ -54,8 +53,7 @@ void main() {
 
     // Convert tile coordinate into the actual coordinate within glyph texture.
     vec2 tileOffset = mod(pixelPosition.xy, context.screenGlyphSize) / vec2(context.screenGlyphSize);
-    vec2 glyphOffset = context.glyphOffsets[glyphIndex] * 0; // Doesn't work yet
-    vec2 glyphCoordinate = ((glyphTile * context.atlasGlyphSize) + (tileOffset * context.atlasGlyphSize) + glyphOffset) / glyphTextureSize;
+    vec2 glyphCoordinate = ((glyphTile * context.atlasGlyphSize) + (tileOffset * context.atlasGlyphSize)) / glyphTextureSize;
 
     // Sample the glyph atlas to set pixel color.
     vec3 textColor = vec3(
