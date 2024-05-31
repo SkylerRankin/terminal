@@ -354,6 +354,9 @@ static int executeCSICommandArgument() {
             break;
         }
         case 'm': { // Graphics control
+            if (numArgs == 0) {
+                updateGraphicsState(0, 0);
+            }
             for (int i = 0; i < numArgs; i++) {
                 updateGraphicsState(args[i], i);
             }
