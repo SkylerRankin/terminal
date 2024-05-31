@@ -61,6 +61,7 @@ struct RenderContext {
     int foregroundColor;
     int backgroundColor;
     int glyphIndicesRowOffset;
+    int lineSpacing;
 };
 
 struct TextShaderContext {

@@ -86,6 +86,14 @@ static void scrollCallback(GLFWwindow *window, double xOffset, double yOffset) {
     }
 }
 
+static int intMax(int a, int b) {
+    return a > b ? a : b;
+}
+
+static int intMin(int a, int b) {
+    return a < b ? a : b;
+}
+
 int lastIndexOf(char *string, int size, char c) {
     for (int i = size; i >= 0; i--) {
         if (string[i] == c) {
@@ -137,30 +145,39 @@ GLuint generateGlyphAtlas(GLuint shaderContextId) {
         printf("Failed to set font size.\n");
         exit(-1);
     }
-    renderContext.atlasGlyphSize = (struct Vec2i) {
-        .x = face->size->metrics.max_advance >> 6,
-        .y = face->size->metrics.height >> 6
-    };
 
     glBindBuffer(GL_SHADER_STORAGE_BUFFER, renderContext.shaderContextId);
     GLvoid *ssboPointer = glMapBufferRange(GL_SHADER_STORAGE_BUFFER, 0, sizeof(struct TextShaderContext), GL_MAP_WRITE_BIT);
     struct TextShaderContext *shaderContext = (struct TextShaderContext*) ssboPointer;
 
-    FT_Pos maxWidth = 0, maxHeight = 0;
+    FT_Pos maxWidth = 0, maxHeight = 0, maxAboveBaseline = 0, maxBelowBaseline = 0;
     for (int asciiCode = 33; asciiCode <= 126; asciiCode++) {
         FT_UInt glyphIndex = FT_Get_Char_Index(face, asciiCode);
         FT_Load_Glyph(face, glyphIndex, 0);
 
-        shaderContext->glyphOffsets[asciiCode - 33].x = face->glyph->metrics.horiBearingX;
-        shaderContext->glyphOffsets[asciiCode - 33].y = face->glyph->metrics.horiBearingY;
+        shaderContext->glyphOffsets[asciiCode - 33].x = face->glyph->metrics.horiBearingX >> 6;
+        shaderContext->glyphOffsets[asciiCode - 33].y = face->glyph->metrics.horiBearingY >> 6;
 
         int pixelWidth = face->glyph->metrics.width >> 6;
         int pixelHeight = face->glyph->metrics.height >> 6;
 
+        int aboveBaseline = face->glyph->metrics.horiBearingY >> 6;
+        int belowBaseline = (face->glyph->metrics.height >> 6) - (face->glyph->metrics.horiBearingY >> 6);
+
         if (pixelWidth > maxWidth) maxWidth = pixelWidth;
         if (pixelHeight > maxHeight) maxHeight = pixelHeight;
+        if (aboveBaseline > maxAboveBaseline) maxAboveBaseline = aboveBaseline;
+        if (belowBaseline > maxBelowBaseline) maxBelowBaseline = belowBaseline;
     }
     glUnmapBuffer(GL_SHADER_STORAGE_BUFFER);
+
+    renderContext.atlasGlyphSize = (struct Vec2i) {
+        .x = face->size->metrics.max_advance >> 6,
+        .y = face->size->metrics.height >> 6
+    };
+
+    int lineSpacing = renderContext.atlasGlyphSize.y - maxHeight;
+    renderContext.lineSpacing = lineSpacing;
 
     printf(
         "Max glyph dimensions are (%ld, %ld), screen glyph size is (%d, %d), atlas glyph size is (%d, %d).\n",
@@ -187,14 +204,19 @@ GLuint generateGlyphAtlas(GLuint shaderContextId) {
         unsigned int bitmapWidth = face->glyph->bitmap.width;
         unsigned int bitmapHeight = face->glyph->bitmap.rows;
 
+        int xOffset = (int) face->glyph->metrics.horiBearingX >> 6;
+        int yOffset = (int) (face->glyph->metrics.height - face->glyph->metrics.horiBearingY) >> 6;
         memset(flippedBitmap, 0, renderContext.atlasGlyphSize.x * renderContext.atlasGlyphSize.y);
         for (int x = 0; x < bitmapWidth; x++) {
             for (int y = 0; y < bitmapHeight; y++) {
-                flippedBitmap[y * renderContext.atlasGlyphSize.x + x] = bitmap->buffer[(bitmapHeight - y - 1) * bitmapWidth + x];
+                int adjustedX = x + xOffset;
+                int adjustedY = intMin(y + lineSpacing + maxBelowBaseline - yOffset, renderContext.atlasGlyphSize.y - 1);
+                flippedBitmap[adjustedY * renderContext.atlasGlyphSize.x + adjustedX] = bitmap->buffer[(bitmapHeight - y - 1) * bitmapWidth + x];
             }
         }
 
         // Each glyph is written to the bottom left of a rectangle whose width is the horizontal advance and whose height is the line height.
+        // The vertical spacing between lines occupies the bottom n pixels of each tile.
         glTexSubImage2D(GL_TEXTURE_2D, 0, nextTileX * renderContext.atlasGlyphSize.x, nextTileY * renderContext.atlasGlyphSize.y, renderContext.atlasGlyphSize.x, renderContext.atlasGlyphSize.y, GL_RED, GL_UNSIGNED_BYTE, flippedBitmap);
         renderContext.characterAtlasMap[asciiCode] = nextTileY * renderContext.atlasTileSize.x + nextTileX;
         nextTileX += 1;
@@ -509,8 +531,11 @@ void updatePaddingTransform() {
 }
 
 void updateCursorTransform() {
-    const float cursorWidth = renderContext.screenGlyphSize.x;
-    const float cursorHeight = renderContext.screenGlyphSize.y;
+    const float tileWidth = renderContext.screenGlyphSize.x;
+    const float tileHeight = renderContext.screenGlyphSize.y;
+
+    const float cursorWidth = tileWidth;
+    const float cursorHeight = tileHeight - renderContext.lineSpacing;
 
     const float scaleF[3] = {
         cursorWidth / renderContext.screenSize.x,
@@ -522,8 +547,8 @@ void updateCursorTransform() {
     float uy = 1 / (cursorHeight / 2);
 
     const float translateF[3] = {
-        -ux * (renderContext.screenSize.x / 2 - (cursorWidth / 2) - renderContext.windowPadding[2] - renderContext.cursorPosition.x * cursorWidth),
-        uy * (renderContext.screenSize.y / 2 - (cursorHeight / 2) - renderContext.windowPadding[0] - renderContext.cursorPosition.y * cursorHeight),
+        -ux * (renderContext.screenSize.x / 2 - (tileWidth / 2) - renderContext.windowPadding[2] - renderContext.cursorPosition.x * tileWidth),
+        uy * ((renderContext.screenSize.y / 2) - (tileHeight / 2) - renderContext.windowPadding[0] - renderContext.cursorPosition.y * tileHeight + (renderContext.lineSpacing / 2.0)),
         0
     };
 
