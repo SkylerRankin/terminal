@@ -7,7 +7,7 @@ RESDIR = res
 LIBDIR = lib
 BUILDDIR = build
 
-HEADER_FILES = terminal.h commands.h colors.h
+HEADER_FILES = terminal.h commands.h colors.h keys.h
 HEADERS = $(patsubst %,$(SRCDIR)/%,$(HEADER_FILES))
 OBJ_FILES = terminal.o commands.o glad.o
 OBJS = $(patsubst %,$(BUILDDIR)/%,$(OBJ_FILES))

@@ -17,6 +17,7 @@
 #include <unistd.h>
 
 #include "terminal.h"
+#include "keys.h"
 #include "commands.h"
 
 struct Buffer {
@@ -35,37 +36,33 @@ static void keyCallback(GLFWwindow* window, int key, int scancode, int action, i
     if (key == GLFW_KEY_ESCAPE && action == GLFW_PRESS) {
         glfwSetWindowShouldClose(window, GLFW_TRUE);
     } else if (action == GLFW_PRESS || action == GLFW_REPEAT) {
-        if (key == GLFW_KEY_ENTER) {
-            key = 0xD;
-        } else if (key == GLFW_KEY_TAB) {
-            key = 0x9;
-        } else if (key == GLFW_KEY_BACKSPACE) {
-            key = 0x8;
-        } else if (key >= 65 && key <= 90) {
-            int shift = mods & GLFW_MOD_SHIFT;
-            if (!shift) {
-                key += 32;
-            }
-            
-            if (mods & GLFW_MOD_CONTROL) {
-                int offset = shift ? 64 : 96;
-                key = key - offset;
-            }
+        if ((mods & GLFW_MOD_SHIFT) | (mods & GLFW_MOD_CAPS_LOCK)) {
+            key = keyShiftMapping[key];
+        } else if (mods & GLFW_MOD_CONTROL) {
+            key = keyControlMapping[key];
+        } else {
+            key = keyNormalMapping[key];
         }
 
-        if ((key >= 32 && key <= 126) || key == 0xD || key == 0x3 || key == 0x9 || key == 0x8) {
+        if (key != KEY_UNMAPPED) {
             bufferKey = 1;
         }
     }
 
     if (bufferKey) {
-        int current = renderContext.keyBuffer.currentIndex;
-        if (current >= renderContext.keyBuffer.length) {
-            printf("Exceeded key input buffer.\n");
-            exit(-1);
+        for (int i = 0; i < 4; i++) {
+            int byte = key & 0xFF;
+            key = key >> 8;
+            if (byte == 0) continue;
+
+            int current = renderContext.keyBuffer.currentIndex;
+            if (current >= renderContext.keyBuffer.length) {
+                printf("Exceeded key input buffer.\n");
+                exit(-1);
+            }
+            renderContext.keyBuffer.data[current] = byte;
+            renderContext.keyBuffer.currentIndex += 1;
         }
-        renderContext.keyBuffer.data[current] = key;
-        renderContext.keyBuffer.currentIndex += 1;
     }
 }
 
@@ -409,20 +406,6 @@ void renderSetup() {
 void sendKeyInputToShell() {
     renderContext.keyBuffer.data[renderContext.keyBuffer.currentIndex] = '\0';
     write(renderContext.controlFd, renderContext.keyBuffer.data, renderContext.keyBuffer.currentIndex);
-
-    int logBytes = 0;
-    if (logBytes) {
-        printf("writing %d bytes to control: [", renderContext.keyBuffer.currentIndex);
-        for (int i = 0; i < renderContext.keyBuffer.currentIndex; i++) {
-            if (isprint(renderContext.keyBuffer.data[i])) {
-                printf("%c", renderContext.keyBuffer.data[i]);
-            } else {
-                printf("\\x%x", renderContext.keyBuffer.data[i]);
-            }
-        }
-        printf("]\n");
-    }
-
     renderContext.keyBuffer.currentIndex = 0;
 }
 
@@ -438,19 +421,6 @@ int pollShell(int controlFd, struct Buffer *buffer) {
         }
     }
     buffer->data[i] = 0;
-
-    // if (i > 0) {
-    //     printf("Reading %d bytes from control: [", i);
-    //     for (int j = 0; j < i; j++) {
-    //         if (isprint(buffer->data[j])) {
-    //             printf("%c", buffer->data[j]);
-    //         } else {
-    //             printf("\\x%x", buffer->data[j]);
-    //         }
-    //     }
-    //     printf("]\n");
-    // }
-
     return i;
 }
 
@@ -639,13 +609,13 @@ int main(int argc, char** argv) {
 
     renderContext.keyBuffer = (struct KeyBuffer) {
         .currentIndex = 0,
-        .length = 1024,
-        .data = 0
+        .length = 32,
+        .data = malloc(sizeof(char) * 32)
     };
-    renderContext.keyBuffer.data = malloc(sizeof(char) * renderContext.keyBuffer.length);
     renderContext.cursorPosition.x = 0;
     renderContext.cursorPosition.y = 0;
 
+    initKeyMappings();
     renderSetup();
     spawnShell();
 
