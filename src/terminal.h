@@ -8,8 +8,8 @@
 
 #define MAX_CHARACTERS_PER_ROW 500
 #define MAX_ROWS 1000
-#define ATLAS_WIDTH 32
-#define ATLAS_HEIGHT 32
+static const int ATLAS_WIDTH = 32;
+static const int ATLAS_HEIGHT = 32;
 
 struct KeyBuffer {
     int currentIndex;

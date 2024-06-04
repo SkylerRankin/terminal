@@ -7,8 +7,7 @@
 #include "terminal.h"
 #include "glyph.h"
 
-#define CACHE_SIZE 1024
-
+static const int CACHE_SIZE = 1024;
 static const int REPLACEMENT_CODEPOINT = 0xFFFD;
 
 struct GlyphEntry;
@@ -21,7 +20,7 @@ struct GlyphEntry {
 };
 
 struct GlyphEntry *glyphCacheBasePointer;
-struct GlyphEntry *glyphCache[CACHE_SIZE];
+struct GlyphEntry **glyphCache;
 struct GlyphEntry *lruStart;
 struct GlyphEntry *lruEnd;
 
@@ -50,10 +49,13 @@ static int inRange(int v, int min, int max) {
 }
 
 void freeGlyphCache() {
+    free(glyphCache);
     free(glyphCacheBasePointer);
 }
 
 void initGlyphCache() {
+    glyphCache = malloc(sizeof(struct GlyphEntry*) * CACHE_SIZE);
+    memset(glyphCache, 0, sizeof(struct GlyphEntry*) * CACHE_SIZE);
     glyphCacheBasePointer = malloc(sizeof(struct GlyphEntry) * CACHE_SIZE);
 
     // Initialize cache with empty entries
@@ -206,12 +208,17 @@ void loadBaselineFont(char *fontPath) {
  * most recently used entry.
 */
 void markGlyphAsUsed(struct GlyphEntry *entry) {
-    if (entry->codePoint == lruStart->codePoint) {
+    if (entry == lruStart) {
         return;
+    }
+
+    if (lruEnd == entry) {
+        lruEnd = entry->previousLRUEntry;
     }
 
     entry->previousLRUEntry = 0;
     entry->nextLRUEntry = lruStart;
+    lruStart->previousLRUEntry = entry;
     lruStart = entry;
 }
 
@@ -249,11 +256,9 @@ void insertCacheEntry(struct GlyphEntry *entry, int hash) {
 struct GlyphEntry* addGlyphToCache(int codePoint, int hash) {
     // Remove end of LRU chain and remove entry from cache
     struct GlyphEntry *deletedEntry = lruEnd;
-    if (deletedEntry) {
-        lruEnd->previousLRUEntry->nextLRUEntry = 0;
-        lruEnd = lruEnd->previousLRUEntry;
-        removeCacheEntry(deletedEntry->codePoint);
-    }
+    lruEnd->previousLRUEntry->nextLRUEntry = 0;
+    lruEnd = lruEnd->previousLRUEntry;
+    removeCacheEntry(deletedEntry->codePoint);
 
     addCodePointToAtlas(codePoint, deletedEntry->atlasPosition);
 
