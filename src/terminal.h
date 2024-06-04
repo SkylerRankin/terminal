@@ -8,6 +8,8 @@
 
 #define MAX_CHARACTERS_PER_ROW 500
 #define MAX_ROWS 1000
+#define ATLAS_WIDTH 32
+#define ATLAS_HEIGHT 32
 
 struct KeyBuffer {
     int currentIndex;
@@ -61,6 +63,7 @@ struct RenderContext {
     int backgroundColor;
     int glyphIndicesRowOffset;
     int lineSpacing;
+    int maxBelowBaseline;
 };
 
 struct TextShaderContext {
@@ -77,8 +80,6 @@ struct TextShaderContext {
     struct Vec2i screenSize;
     // Vector containing (columns, rows) for the screen grid.
     struct Vec2i screenTileSize;
-    // Vector containing (columns, rows) for the atlas texture grid.
-    struct Vec2i atlasTileSize;
     // Pixel vector containing the number of extra pixels on the right and bottom of the screen.
     // These areas do not fit a full glyph so are not used.
     struct Vec2i screenExcess;

@@ -19,6 +19,7 @@
 #include "terminal.h"
 #include "keys.h"
 #include "commands.h"
+#include "glyph.h"
 
 struct Buffer {
     int length;
@@ -26,6 +27,7 @@ struct Buffer {
 };
 
 struct RenderContext renderContext;
+extern FT_Face face;
 
 static void errorCallback(int error, const char* description) {
     printf("GLFW error callback: (%d) %s\n", error, description);
@@ -83,10 +85,6 @@ static void scrollCallback(GLFWwindow *window, double xOffset, double yOffset) {
     }
 }
 
-static int intMin(int a, int b) {
-    return a < b ? a : b;
-}
-
 int lastIndexOf(char *string, int size, char c) {
     for (int i = size; i >= 0; i--) {
         if (string[i] == c) {
@@ -108,120 +106,6 @@ char* buildRelativePath(char *path) {
     sprintf(pathBuffer, "%s/%s%c", pathBuffer, path, '\0');
 
     return pathBuffer;
-}
-
-GLuint generateGlyphAtlas(GLuint shaderContextId) {
-    FT_Library library;
-    if (FT_Init_FreeType(&library)) {
-        printf("Failed to init freetype.\n");
-        exit(-1);
-    }
-
-    char *fontPath = buildRelativePath("fonts/UbuntuMono-R.ttf");
-    FT_Face face;
-    if (FT_New_Face(library, fontPath, 0, &face)) {
-        printf("Failed to load font at path %s.\n", fontPath);
-        exit(-1);
-    }
-    free(fontPath);
-
-    if (FT_Set_Pixel_Sizes(face, 0, renderContext.fontSize)) {
-        printf("Failed to set font size.\n");
-        exit(-1);
-    }
-    renderContext.screenGlyphSize = (struct Vec2i) {
-        .x = face->size->metrics.max_advance >> 6,
-        .y = face->size->metrics.height >> 6
-    };
-
-    if (FT_Set_Pixel_Sizes(face, 0, renderContext.atlasFontHeight)) {
-        printf("Failed to set font size.\n");
-        exit(-1);
-    }
-
-    FT_Pos maxWidth = 0, maxHeight = 0, maxAboveBaseline = 0, maxBelowBaseline = 0;
-    for (int asciiCode = 33; asciiCode <= 126; asciiCode++) {
-        FT_UInt glyphIndex = FT_Get_Char_Index(face, asciiCode);
-        FT_Load_Glyph(face, glyphIndex, 0);
-
-        int pixelWidth = face->glyph->metrics.width >> 6;
-        int pixelHeight = face->glyph->metrics.height >> 6;
-
-        int aboveBaseline = face->glyph->metrics.horiBearingY >> 6;
-        int belowBaseline = (face->glyph->metrics.height >> 6) - (face->glyph->metrics.horiBearingY >> 6);
-
-        if (pixelWidth > maxWidth) maxWidth = pixelWidth;
-        if (pixelHeight > maxHeight) maxHeight = pixelHeight;
-        if (aboveBaseline > maxAboveBaseline) maxAboveBaseline = aboveBaseline;
-        if (belowBaseline > maxBelowBaseline) maxBelowBaseline = belowBaseline;
-    }
-
-    renderContext.atlasGlyphSize = (struct Vec2i) {
-        .x = face->size->metrics.max_advance >> 6,
-        .y = face->size->metrics.height >> 6
-    };
-
-    int lineSpacing = renderContext.atlasGlyphSize.y - maxHeight;
-    renderContext.lineSpacing = lineSpacing;
-
-    printf(
-        "Max glyph dimensions are (%ld, %ld), screen glyph size is (%d, %d), atlas glyph size is (%d, %d).\n",
-        maxWidth, maxHeight, renderContext.screenGlyphSize.x, renderContext.screenGlyphSize.y, renderContext.atlasGlyphSize.x, renderContext.atlasGlyphSize.y);
-
-    GLuint texture;
-    glGenTextures(1, &texture);
-    glBindTexture(GL_TEXTURE_2D, texture);
-    glTexImage2D(GL_TEXTURE_2D, 0, GL_RED, renderContext.atlasTileSize.x * renderContext.atlasGlyphSize.x, renderContext.atlasTileSize.y * renderContext.atlasGlyphSize.y, 0, GL_RED, GL_UNSIGNED_BYTE, 0);
-    glPixelStorei(GL_UNPACK_ALIGNMENT, 1);
-
-    int nextTileX = 1;
-    int nextTileY = 0;
-    char *flippedBitmap = malloc(sizeof(char) * renderContext.atlasGlyphSize.x * renderContext.atlasGlyphSize.y);
-
-    for (int asciiCode = 33; asciiCode <= 126; asciiCode++) {
-        FT_UInt glyphIndex = FT_Get_Char_Index(face, asciiCode);
-        FT_Load_Glyph(face, glyphIndex, 0);
-        if (face->glyph->format != FT_GLYPH_FORMAT_BITMAP) {
-            FT_Render_Glyph(face->glyph, FT_RENDER_MODE_NORMAL);
-        }
-        FT_Bitmap *bitmap = &face->glyph->bitmap;
-
-        unsigned int bitmapWidth = face->glyph->bitmap.width;
-        unsigned int bitmapHeight = face->glyph->bitmap.rows;
-
-        int xOffset = (int) face->glyph->metrics.horiBearingX >> 6;
-        int yOffset = (int) (face->glyph->metrics.height - face->glyph->metrics.horiBearingY) >> 6;
-        memset(flippedBitmap, 0, renderContext.atlasGlyphSize.x * renderContext.atlasGlyphSize.y);
-        for (int x = 0; x < bitmapWidth; x++) {
-            for (int y = 0; y < bitmapHeight; y++) {
-                int adjustedX = x + xOffset;
-                int adjustedY = intMin(y + lineSpacing + maxBelowBaseline - yOffset, renderContext.atlasGlyphSize.y - 1);
-                flippedBitmap[adjustedY * renderContext.atlasGlyphSize.x + adjustedX] = bitmap->buffer[(bitmapHeight - y - 1) * bitmapWidth + x];
-            }
-        }
-
-        // Each glyph is written to the bottom left of a rectangle whose width is the horizontal advance and whose height is the line height.
-        // The vertical spacing between lines occupies the bottom n pixels of each tile.
-        glTexSubImage2D(GL_TEXTURE_2D, 0, nextTileX * renderContext.atlasGlyphSize.x, nextTileY * renderContext.atlasGlyphSize.y, renderContext.atlasGlyphSize.x, renderContext.atlasGlyphSize.y, GL_RED, GL_UNSIGNED_BYTE, flippedBitmap);
-        renderContext.characterAtlasMap[asciiCode] = nextTileY * renderContext.atlasTileSize.x + nextTileX;
-        nextTileX += 1;
-        if (nextTileX >= renderContext.atlasTileSize.x) {
-            nextTileX = 0;
-            nextTileY += 1;
-        }
-    }
-
-    free(flippedBitmap);
-    FT_Done_Face(face);
-    FT_Done_FreeType(library);
-
-    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
-    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
-    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
-    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
-    glBindTexture(GL_TEXTURE_2D, 0);
-
-    return texture;
 }
 
 void spawnShell() {
@@ -354,7 +238,15 @@ void renderSetup() {
     glBindBufferBase(GL_SHADER_STORAGE_BUFFER, shaderContextIndex, shaderContextId);
     glBindBuffer(GL_SHADER_STORAGE_BUFFER, 0);
 
-    renderContext.atlasTextureId = generateGlyphAtlas(shaderContextId);
+    glGenTextures(1, &renderContext.atlasTextureId);
+    glBindTexture(GL_TEXTURE_2D, renderContext.atlasTextureId);
+    glTexImage2D(GL_TEXTURE_2D, 0, GL_RED, ATLAS_WIDTH * renderContext.atlasGlyphSize.x, ATLAS_HEIGHT * renderContext.atlasGlyphSize.y, 0, GL_RED, GL_UNSIGNED_BYTE, 0);
+    glPixelStorei(GL_UNPACK_ALIGNMENT, 1);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
+    glBindTexture(GL_TEXTURE_2D, 0);
 
     const GLuint textVertexShader = compileShader("shaders/text_vertex.glsl", GL_VERTEX_SHADER);
     const GLuint textFragmentShader = compileShader("shaders/text_fragment.glsl", GL_FRAGMENT_SHADER);
@@ -428,15 +320,15 @@ void updateText(struct Buffer *buffer) {
     struct TextShaderContext *shaderContext = renderContext.shaderContext;
 
     // Should these be updated every time?
+    // TODO: move these to the baseline font setup function
     shaderContext->atlasGlyphSize = renderContext.atlasGlyphSize;
     shaderContext->screenGlyphSize = renderContext.screenGlyphSize;
-    shaderContext->atlasTileSize = renderContext.atlasTileSize;
 
     for (int i = 0; i < buffer->length; i++) {
         if (buffer->data[i] == '\0') break;
 
-        int character, prevRowOffset = renderContext.glyphIndicesRowOffset;
-        if (!processTextByte(buffer->data[i], &character)) {
+        int codePoint, prevRowOffset = renderContext.glyphIndicesRowOffset;
+        if (!processTextByte(buffer->data[i], &codePoint)) {
             // processTextByte can update the row offset in the case of a newline command. In this case, the previous text
             // at the next row is cleared.
             if (renderContext.glyphIndicesRowOffset != prevRowOffset) {
@@ -449,9 +341,11 @@ void updateText(struct Buffer *buffer) {
         // Reset scroll offset to jump back to current line when there are printed characters.
         renderContext.scrollOffset = 0;
 
+        int atlasPosition = getGlyphAtlasPosition(codePoint);
+
         int glyphIndex = ((renderContext.cursorPosition.y + renderContext.glyphIndicesRowOffset) % MAX_ROWS) * MAX_CHARACTERS_PER_ROW + renderContext.cursorPosition.x;
         shaderContext->glyphIndicesRowOffset = renderContext.glyphIndicesRowOffset;
-        shaderContext->glyphIndices[glyphIndex] = renderContext.characterAtlasMap[character];
+        shaderContext->glyphIndices[glyphIndex] = atlasPosition;
         shaderContext->glyphColors[glyphIndex] = renderContext.foregroundColor;
 
         renderContext.cursorPosition.x++;
@@ -603,8 +497,6 @@ int main(int argc, char** argv) {
     Would be nice to do the sampling so that the font size can be changed without recreating the atlas texture.
     */
     renderContext.atlasFontHeight = 16;
-    renderContext.atlasTileSize = (struct Vec2i) { .x = 12, .y = 12 };
-    renderContext.characterAtlasMap = (int*) malloc(sizeof(int) * renderContext.atlasTileSize.x * renderContext.atlasTileSize.y);
     renderContext.foregroundColor = 0x00FFFFFF;
 
     renderContext.keyBuffer = (struct KeyBuffer) {
@@ -616,7 +508,11 @@ int main(int argc, char** argv) {
     renderContext.cursorPosition.y = 0;
 
     initKeyMappings();
+    char *fontPath = buildRelativePath("fonts/UbuntuMono-R.ttf");
+    loadBaselineFont(fontPath);
+    free(fontPath);
     renderSetup();
+    initGlyphCache();
     spawnShell();
 
     struct Buffer shellOutputBuffer;
@@ -660,6 +556,7 @@ int main(int argc, char** argv) {
     free(renderContext.characterAtlasMap);
     free(renderContext.keyBuffer.data);
     free(shellOutputBuffer.data);
+    freeGlyphCache();
 
     glfwDestroyWindow(renderContext.window);
     glfwTerminate();

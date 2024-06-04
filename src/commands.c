@@ -47,6 +47,9 @@ struct ParsingState {
     enum CommandState commandState;
     enum ColorInputState colorInput;
     struct Buffer argBuffer;
+    int characterBuffer;
+    int characterByteIndex;
+    int bytesInCharacter;
 };
 
 extern struct RenderContext renderContext;
@@ -59,7 +62,10 @@ static struct ParsingState state = {
         .length = 128,
         .position = 0
     },
-    .colorInput = COLOR_INPUT_NONE
+    .colorInput = COLOR_INPUT_NONE,
+    .characterBuffer = 0,
+    .characterByteIndex = 0,
+    .bytesInCharacter = 0
 };
 
 static int handleStagePlainText(u8 byte, int *character);
@@ -78,6 +84,31 @@ int processTextByte(u8 byte, int *character) {
     }
 }
 
+static int utf8EncodingToCodepoint(unsigned int encoding) {
+    // 1 byte encoding
+    if ((encoding >> 7) == 0) {
+        return encoding & 0x7F;
+    }
+
+    // 2 byte encoding
+    if ((encoding >> 13) == 0x6) {
+        return ((encoding & 0x1F00) >> 0x2) | (encoding & 0x3F);
+    }
+
+    // 3 byte encoding
+    if ((encoding >> 0x14) == 0xE) {
+        return ((encoding & 0xF0000) >> 0x4) | ((encoding & 0x3F00) >> 0x2) | (encoding & 0x3F);
+    }
+
+    // 4 byte encoding
+    if ((encoding >> 0x1B) == 0x1E) {
+        return ((encoding & 0x7000000) >> 0x6) | ((encoding & 0x3F0000) >> 0x4) | ((encoding & 0x3F00) >> 0x2) | (encoding & 0x3F);
+    }
+
+    printf("Cannot create codepoint for invalid UTF-8 encoding %08x.\n", encoding);
+    return 0xFFFD;
+}
+
 static void clearBuffer(struct Buffer *buffer) {
     buffer->position = 0;
     memset(buffer->data, 0, buffer->length);
@@ -87,12 +118,51 @@ static int handleStagePlainText(u8 byte, int *character) {
     if (byte == 0x1B) {
         state.currentStage = STAGE_ESCAPE;
         return 0;
-    } else if ((byte >= 0x7 && byte <= 13) || byte == 0x7F) {
+    } else if ((byte >= 0x7 && byte <= 0xD) || byte == 0x7F) {
         executeC0ControlCode(byte);
         return 0;
+    } else if (state.characterByteIndex == 0) {
+        if (((byte >> 7) & 0x1) == 0) {
+            // 1 byte encoding
+            *character = byte;
+            return 1;
+        } else if (((byte >> 5) & 0x7) == 0x6) {
+            // 2 byte encoding
+            state.bytesInCharacter = 2;
+            state.characterByteIndex++;
+            state.characterBuffer = byte & 0xFF;
+            return 0;
+        } else if (((byte >> 4) & 0xF) == 0xE) {
+            // 3 byte encoding
+            state.bytesInCharacter = 3;
+            state.characterByteIndex++;
+            state.characterBuffer = byte & 0xFF;
+            return 0;
+        } else if (((byte >> 3) & 0x1F) == 0x1E) {
+            // 4 byte encoding
+            state.bytesInCharacter = 4;
+            state.characterByteIndex++;
+            state.characterBuffer = byte & 0xFF;
+            return 0;
+        } else {
+            printf("Invalid\n");
+            return 1;
+        }
     } else {
-        *character = byte;
-        return 1;
+        if (((byte >> 6) & 0x3) != 0x2) {
+            printf("Invalid UTF-8 encoded byte\n");
+        }
+        state.characterBuffer = (state.characterBuffer << 8) | byte;
+        if (state.bytesInCharacter == state.characterByteIndex + 1) {
+            *character = utf8EncodingToCodepoint(state.characterBuffer);
+            state.characterBuffer = 0;
+            state.characterByteIndex = 0;
+            state.bytesInCharacter = 0;
+            return 1;
+        } else {
+            state.characterByteIndex++;
+            return 0;
+        }
     }
 }
 

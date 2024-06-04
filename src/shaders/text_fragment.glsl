@@ -2,6 +2,8 @@
 
 #define MAX_CHARACTERS_PER_ROW 500
 #define MAX_ROWS 1000
+#define ATLAS_WIDTH 32
+#define ATLAS_HEIGHT 32
 
 layout(std430, binding = 2) buffer TextShaderContext {
     int glyphIndicesRowOffset;
@@ -9,7 +11,6 @@ layout(std430, binding = 2) buffer TextShaderContext {
     ivec2 screenGlyphSize;
     ivec2 screenSize;
     ivec2 screenTileSize;
-    ivec2 atlasTileSize;
     ivec2 screenExcess;
     uint glyphIndices[MAX_CHARACTERS_PER_ROW * MAX_ROWS];
     uint glyphColors[MAX_CHARACTERS_PER_ROW * MAX_ROWS];
@@ -26,7 +27,8 @@ void main() {
     );
 
     // Setup constants
-    vec2 glyphTextureSize = context.atlasTileSize * context.atlasGlyphSize;
+    vec2 atlasTileSize = vec2(ATLAS_WIDTH, ATLAS_HEIGHT);
+    vec2 glyphTextureSize = atlasTileSize * context.atlasGlyphSize;
     vec2 pixelPosition = vec2(
         screenPosition.x,
         screenPosition.y - context.screenExcess.y
@@ -49,7 +51,7 @@ void main() {
 
     // Find 2d tile coordinates of the corresponding glyph.
     uint glyphIndex = context.glyphIndices[tileIndex];
-    ivec2 glyphTile = ivec2(mod(glyphIndex, context.atlasTileSize.x), floor(glyphIndex / context.atlasTileSize.x));
+    ivec2 glyphTile = ivec2(mod(glyphIndex, atlasTileSize.x), floor(glyphIndex / atlasTileSize.x));
 
     // Convert tile coordinate into the actual coordinate within glyph texture.
     vec2 tileOffset = mod(pixelPosition.xy, context.screenGlyphSize) / vec2(context.screenGlyphSize);
@@ -75,8 +77,9 @@ void main() {
     }
 
     // outColor = vec4(tile.x / float(context.screenTileSize.x), tile.y / float(context.screenTileSize.y), 0.0, 1.0);
-    // outColor = vec4(glyphTile.x / float(context.atlasTileSize.x), glyphTile.y / float(context.atlasTileSize.y), 0.0, 1.0);
+    // outColor = vec4(glyphTile.x / float(atlasTileSize.x), glyphTile.y / float(atlasTileSize.y), 0.0, 1.0);
     // outColor = vec4(tileOffset.x, tileOffset.y, 0.0, 1.0);
     // outColor = vec4(outOfBoundsMask, 0, 0, 1.0);
     // if (outColor.a == 0) outColor = vec4(0, tileIndex / float(MAX_CHARACTERS_PER_ROW) / 50, 0.0, 1.0);
+    // outColor = vec4(texture(glyphTexture, gl_FragCoord.xy / context.screenSize.xy).r, 0.0, 0.0, 1.0);
 };
