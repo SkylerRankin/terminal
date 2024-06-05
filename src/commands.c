@@ -4,8 +4,7 @@
 
 #include "terminal.h"
 #include "colors.h"
-
-typedef unsigned char u8;
+#include "commands.h"
 
 enum Stage {
     STAGE_PLAIN_TEXT,

@@ -16,10 +16,10 @@
 #include <time.h>
 #include <unistd.h>
 
-#include "terminal.h"
-#include "keys.h"
 #include "commands.h"
 #include "glyph.h"
+#include "keys.h"
+#include "terminal.h"
 
 struct Buffer {
     int length;

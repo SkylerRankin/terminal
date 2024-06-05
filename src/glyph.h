@@ -1,3 +1,5 @@
+#pragma once
+
 struct Vec2i8 { unsigned char x; unsigned char y; };
 
 void initGlyphCache();

@@ -1,3 +1,5 @@
+#pragma once
+
 // Normal brightness foreground colors.
 const int COLORS_FG[] = {
     0x00282C34, // 30, black

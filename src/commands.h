@@ -1,3 +1,5 @@
 #pragma once
 
-int processTextByte(unsigned char byte, int *character);
+typedef unsigned char u8;
+
+int processTextByte(u8 byte, int *character);
